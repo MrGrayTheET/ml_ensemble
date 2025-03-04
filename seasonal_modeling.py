@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from filters import kama, wwma
+from futures_ml import torch_dl as tdl
 from ml_ensemble.tests import eval_model, evaluate_seasonal
 from scipy.signal import find_peaks
 from finance_models import utils
@@ -17,9 +18,9 @@ class fft_decomp:
         self.data = data.dropna()
         self.data['ema'] = self.data.Close.ewm(span=3).mean()
 
-
     def kama_detrend(self, period=20, fast=2, slow=30):
-        self.detrended_data = (self.data.Close - kama(self.data.Close, period=period, period_fast=fast, period_slow=slow))[period:]
+        self.detrended_data = (self.data.Close - kama(self.data.Close, period=period, period_fast=fast,
+                                                      period_slow=slow))[period:]
         self.detrend_method = 'kama'
         return
 
@@ -28,7 +29,6 @@ class fft_decomp:
         self.detrend_method = 'wwma'
         return self.detrended_data
 
-
     def fft_data(self, detrended=True, d=1, top_n=5, ema=False):
         if detrended:
             if ema:
@@ -36,21 +36,21 @@ class fft_decomp:
             else:
                 data = self.detrended_data
 
-            self.detrended=True
+            self.detrended = True
         else:
             if ema:
-                data= self.data.Close.ewm(span=3).mean()
+                data = self.data.Close.ewm(span=3).mean()
             else:
                 data = self.data.Close
 
-            self.detrended=False
+            self.detrended = False
 
         self.res = np.fft.fft(data, axis=0)
         N = len(data)
 
-        self.freqs = np.fft.fftfreq(len(self.res), d=1/d)
-        self.magnitude = np.abs(self.res)[:N//2]
-        self.periods = 1/self.freqs[:N//2]
+        self.freqs = np.fft.fftfreq(len(self.res), d=1 / d)
+        self.magnitude = np.abs(self.res)[:N // 2]
+        self.periods = 1 / self.freqs[:N // 2]
         self.periods = self.periods[~np.isinf(self.periods)]
         self.angle = np.angle(self.res)
 
@@ -65,8 +65,8 @@ class fft_decomp:
         self.indices = sorted_indices
         self.fft_df['angle'] = np.angle(self.res)[peaks][self.indices]
 
-
         return self.fft_df
+
     def reconstruct_signal(self):
         filtered_data = np.zeros_like(self.res)
         filtered_data[self.indices] = self.res[self.indices]
@@ -80,7 +80,7 @@ class fft_decomp:
             plot_data = self.data.Close
 
         plt.plot(plot_data.index, plot_data, label='Original')
-        plt.plot(plot_data.index, reconstructed_signal, label = 'Reconstructed')
+        plt.plot(plot_data.index, reconstructed_signal, label='Reconstructed')
         plt.legend()
         plt.xlabel("Period")
         plt.ylabel("Close")
@@ -93,43 +93,41 @@ class fft_decomp:
         else:
             data = self.data
 
-
-
-        t_extended = np.linspace(0, (len(data) + periods_forward) , len(data) + periods_forward, endpoint=False)
+        t_extended = np.linspace(0, (len(data) + periods_forward), len(data) + periods_forward, endpoint=False)
         t = np.linspace(0, len(data), len(data), endpoint=False)
         extrapolated_signal = np.zeros_like(t_extended)
 
         for i in range(n_frequencies):
-            extrapolated_signal += self.fft_df[0].iloc[i] * np.sin(2 * np.pi * (1/self.fft_df.index[i]) * t_extended + self.fft_df['angle'].iloc[i])
+            extrapolated_signal += self.fft_df[0].iloc[i] * np.sin(
+                2 * np.pi * (1 / self.fft_df.index[i]) * t_extended + self.fft_df['angle'].iloc[i])
 
         if plot:
-            plt.figure(figsize=(10,5))
+            plt.figure(figsize=(10, 5))
             plt.plot(t, data, label="Original Signal")
-            plt.plot(t_extended, extrapolated_signal/scale_rate, label='Extrapolated Signal')
+            plt.plot(t_extended, extrapolated_signal / scale_rate, label='Extrapolated Signal')
             plt.axvline(x=t[-1], color='red', linestyle='dotted', label='Extrapolation Start')
             plt.legend()
 
+        return extrapolated_signal / scale_rate
 
-        return extrapolated_signal/scale_rate
 
 class technical_model:
 
     def __init__(self, data, project_dir='F:\\ML\\'):
 
-
         self.model = None
-        self.target = None
         self.decomp_model = None
         self.data = data
-        self.features = []
+        self._features = []
+        self._target = None
 
         if not os.path.isdir(project_dir): os.mkdir(project_dir)
 
         self.model_info = {
-            'Seasonal': {'Features':[]},
-            'Trend': {'Features':[]},
-            'Volume': {'Features':[]},
-            'Volatility': {'Features':[]},
+            'Seasonal': {'Features': []},
+            'Trend': {'Features': []},
+            'Volume': {'Features': []},
+            'Volatility': {'Features': []},
             'ML': {},
             'Dir': project_dir
         }
@@ -137,6 +135,35 @@ class technical_model:
         self.defaults = {'xgb': xgb_params, 'gbr': gbr_params, 'rfr': rfr_params}
 
         return
+
+    @property
+    def features(self):
+        return self._features
+
+    @features.setter
+    def features(self, types):
+        features = []
+        for i in types:
+            features = features + self.model_info[i]['Features']
+
+        self._features = features
+
+    @features.deleter
+    def features(self):
+        del self._features
+
+    @property
+    def target(self):
+        return self._target
+
+    @target.setter
+    def target(self, periods):
+        self._target = f'TARGET_{periods}'
+        self.data[f'TARGET_{periods}'] = self.data.Close.pct_change(-periods)
+
+    @target.deleter
+    def target(self):
+        del self._target
 
     def find_frequencies(self, detrend_data=False, detrend_method='wwma', detrend_period=25, n_frequencies=25):
 
@@ -298,10 +325,6 @@ class technical_model:
             self.data[f'rvol_{length}'] = rvol(self.data, length=length, by=rel_by)
             features.append(f'rvol_{length}')
 
-        if cum_vol:
-            self.data[f'cum_rvol_{cum_len}'] = cum_rvol(self.data, cum_len)
-            features.append(f'cum_rvol_{cum_len}')
-
         self.model_info['Volume'].update({'Features': features})
 
         return self.data[features]
@@ -325,27 +348,25 @@ class technical_model:
             self.data['nATR'] = atr(self.data, length=nATR_len, normalized=True)
             features.append('nATR')
 
-        self.model_info['Volatility'].update({'Features':features})
+        self.model_info['Volatility'].update({'Features': features})
 
         return self.data[features]
 
-    def train_model(self, target_period=10, feat_types=['Volume', 'Seasonal', 'Trend', 'Volatility'], method='xgb', params=None,
+    def train_model(self, target_period=10, feat_types=['Volume', 'Seasonal', 'Trend', 'Volatility'], method='xgb',
+                    params=None,
                     save_file='model_eval.csv', plot=True):
 
-        self.data[f'TARGET_{target_period}'] = self.data.Close.pct_change(-target_period)
-        self.target = f'TARGET_{target_period}'
+        self.target = target_period
 
-        self.features = []
-
-        for i in feat_types: self.features = self.features + self.model_info[i]['Features']
+        self.features = feat_types
 
         if params is None: params = self.defaults[method]
 
-        data = self.data[self.features + [self.target]].dropna()
-
+        data = self.data[self._features + [self.target]].dropna()
         ml_model = ml(data, self.features, self.target)
 
-        self.model_info['ML'].update({'Train Length': len(ml_model.y_train), 'Test_length': len(ml_model.y_test)})
+        self.model_info['ML'].update({'Train Length': len(ml_model.y_train),
+                                      'Test_length': len(ml_model.y_test)})
 
         if method == 'xgb':
             res = ml_model.xgb_model(params, evaluate=True, eval_log=self.model_info['Dir'] + save_file, plot_pred=plot)
@@ -355,11 +376,95 @@ class technical_model:
                                       plot_pred=plot)
 
         self.model_info['ML'].update({'Type': method, 'Eval': res})
-
         self.model = ml_model.model
 
         return self.model_info['ML']['Eval']
 
+
+class dl_model(technical_model):
+
+    def __init__(self, data, project_dir='F:\\ML\\Seasonal\\'):
+        super().__init__(data, project_dir)
+        self.training_preds = None
+        self.scaler = None
+        self._target = 'Close'
+        self.model_info.update({'DL': []})
+        self.loss = None
+
+        return
+
+    @property
+    def features(self):
+        return self._features
+
+    @features.setter
+    def features(self, types):
+        features = ['Open', 'High', 'Low', 'Close']
+        for i in types:
+            features = features + self.model_info[i]['Features']
+
+        self._features = features
+
+    def torch_model(self, feat_types=['Volume', 'Seasonal', 'Trend'],
+                    periods_in=20, periods_out=5, log_file='tdl_model.csv',
+                    n_epochs=200, lr=0.001, hidden_size=2, n_layers=1,loss_func=None,
+                    scale_x=True, x_scale_type='standard', scale_y=True, y_scale_type='standard'):
+
+        if loss_func is None:
+            self.loss_func = nn.MSELoss()
+
+
+        self.features = feat_types
+        data = self.data[self._features].dropna()
+        [self.train_x, self.train_y], [self.test_x, self.test_y], self.scaler = clean_arrays(data, self._features,
+
+                                                                                              self._target,
+                                                                                             sequence=True,
+                                                                                             periods_in=periods_in,
+                                                                                             periods_out=periods_out,
+                                                                                             scale_x=scale_x,
+                                                                                             x_scale_type=x_scale_type,
+                                                                                             to_tensor=True,
+                                                                                             scale_y=scale_y,
+                                                                                             return_y_scaler=True,
+                                                                                             y_scale_type=y_scale_type)
+
+        self.train_x = torch.reshape(self.train_x, (self.train_x.shape[0], periods_in, self.train_x.shape[2]))
+        self.test_x = torch.reshape(self.test_x, (self.test_x.shape[0], periods_in, self.test_x.shape[2]))
+
+        if self.test_y.shape[2] == 2:
+            self.test_y = self.test_y.mean(dim=2)
+            self.train_y = self.train_y.mean(dim=2)
+
+        self.model = tdl.lstm(num_classes=periods_out, input_size=len(self.features) + 1, hidden_size=hidden_size,
+                              num_layers=n_layers)
+
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+
+        tdl.training_loop(n_epochs=n_epochs, lstm=self.model, optimizer=self.optimizer, loss_func=self.loss,
+                          X_train=self.train_x, y_train=self.train_y, X_test=self.test_x, y_test=self.test_y)
+
+        self.training_preds = self.model(self.train_x)
+        self.test_preds = self.model(self.test_x)
+
+        eval_results = self.eval_model()
+
+        return eval_results
+
+    def torch_loop(self, n_epochs=200):
+        return tdl.training_loop(self.model, optimizer=self.optimizer, n_epochs=n_epochs, loss_func=self.loss_func,
+                                 X_train=self.train_x, y_train=self.train_y, X_test=self.test_x, y_test=self.test_y)
+
+    def eval_model(self):
+        mse_loss = torch.mean((self.test_preds - self.test_y) ** 2)
+        rmse_loss = mse_loss.sqrt()
+        std = self.test_y.std()
+        rmse_loss / std
+
+        eval = {'MSE': mse_loss.item(),
+                'RMSE': rmse_loss.item()}
+
+        return eval
 
 
 
