@@ -1,11 +1,11 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from filters import kama, wwma
+from ml_ensemble.filters import kama, wwma
 from futures_ml import torch_dl as tdl
 from ml_ensemble.tests import eval_model, evaluate_seasonal
 from scipy.signal import find_peaks
-from finance_models import utils
+from futures_ml import utils
 from statsmodels.tsa.seasonal import STL, MSTL, seasonal_decompose
 from finance_models.ml_model import ml_model as ml, xgb_params, gbr_params, rfr_params
 
