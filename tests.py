@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import yfinance as yf
 from statsmodels.tsa.stattools import adfuller as adf
-from finance_models.utils import evaluate_model
+from futures_ml.utils import evaluate_model
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from statsmodels.stats.diagnostic import acorr_ljungbox
 from scipy.stats import zscore
