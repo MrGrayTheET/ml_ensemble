@@ -11,7 +11,6 @@ from futures_ml import utils
 from statsmodels.tsa.seasonal import STL, MSTL, seasonal_decompose
 from futures_ml.ml_model import ml_model as ml, xgb_params, gbr_params, rfr_params
 
-
 class fft_decomp:
 
     def __init__(self, data):
@@ -377,7 +376,7 @@ class technical_model:
             res = ml_model.tree_model(params, gbr=True, evaluate=True, eval_log=self.model_info['Dir'] + save_file,
                                       plot_pred=plot)
 
-        self.model_info['ML'].update({'Type': method, 'Eval': res})
+        self.model_info['ML'].update({'Type': method, 'Eval': res, 'Hyperparams': ml_model.model.paramters})
         self.model = ml_model.model
 
         return self.model_info['ML']['Eval']
@@ -387,6 +386,11 @@ class dl_model(technical_model):
 
     def __init__(self, data, project_dir='F:\\ML\\Seasonal\\'):
         super().__init__(data, project_dir)
+        self.train_y, self.train_x, self.test_x, self.test_y = [None] * 4
+        self.optimizer = None
+        self.train_x = None
+        self.test_preds = None
+        self.loss_func = None
         self.training_preds = None
         self.scaler = None
         self._target = 'Close'
@@ -404,46 +408,77 @@ class dl_model(technical_model):
         features = ['Open', 'High', 'Low', 'Close']
         for i in types:
             features = features + self.model_info[i]['Features']
+            self._features = features
 
-        self._features = features
+    @property
+    def target(self):
+        return self._target
+
+    @target.setter
+    def target(self, col):
+        self._target = col
 
     def torch_model(self, feat_types=['Volume', 'Seasonal', 'Trend'],
                     periods_in=20, periods_out=5, log_file='tdl_model.csv',
-                    n_epochs=200, lr=0.001, hidden_size=2, n_layers=1,loss_func=None,
+                    n_epochs=200, lr=0.0001, hidden_size=2, n_layers=1, loss_func=None, lstm=tdl.lstm,
                     scale_x=True, x_scale_type='standard', scale_y=True, y_scale_type='standard'):
 
         if loss_func is None:
             self.loss_func = nn.MSELoss()
-
+        else:
+            self.loss_func = loss_func()
 
         self.features = feat_types
-        data = self.data[self._features].dropna()
-        [self.train_x, self.train_y], [self.test_x, self.test_y], self.scaler = clean_arrays(data, self._features,
+        if self._target == 'Close':
+            data = self.data[self._features]
+            input_size = len(self._features)+1
 
-                                                                                              self._target,
-                                                                                             sequence=True,
-                                                                                             periods_in=periods_in,
-                                                                                             periods_out=periods_out,
-                                                                                             scale_x=scale_x,
-                                                                                             x_scale_type=x_scale_type,
-                                                                                             to_tensor=True,
-                                                                                             scale_y=scale_y,
-                                                                                             return_y_scaler=True,
-                                                                                             y_scale_type=y_scale_type)
+
+
+        else:
+            data = self.data[self._features + [self._target]]
+            input_size = len(self._features)
+
+        if scale_y:
+            [self.train_x, self.train_y], [self.test_x, self.test_y], self.scaler = clean_arrays(data, self._features,
+
+                                                                                                 self._target,
+                                                                                                 sequence=True,
+                                                                                                 periods_in=periods_in,
+                                                                                                 periods_out=periods_out,
+                                                                                                 scale_x=scale_x,
+                                                                                                 x_scale_type=x_scale_type,
+                                                                                                 to_tensor=True,
+                                                                                                 scale_y=scale_y,
+                                                                                                 return_y_scaler=scale_y,
+                                                                                                 y_scale_type=y_scale_type)
+        else:
+            [self.train_x, self.train_y], [self.test_x, self.test_y] = clean_arrays(data, self._features,
+
+                                                                                    self._target,
+                                                                                    sequence=True,
+                                                                                    periods_in=periods_in,
+                                                                                    periods_out=periods_out,
+                                                                                    scale_x=scale_x,
+                                                                                    x_scale_type=x_scale_type,
+                                                                                    to_tensor=True,
+                                                                                    scale_y=scale_y,
+                                                                                    return_y_scaler=scale_y,
+                                                                                    y_scale_type=y_scale_type)
 
         self.train_x = torch.reshape(self.train_x, (self.train_x.shape[0], periods_in, self.train_x.shape[2]))
         self.test_x = torch.reshape(self.test_x, (self.test_x.shape[0], periods_in, self.test_x.shape[2]))
 
-        if self.test_y.shape[2] == 2:
+        if len(self.test_y.shape) > 2:
             self.test_y = self.test_y.mean(dim=2)
             self.train_y = self.train_y.mean(dim=2)
 
-        self.model = tdl.lstm(num_classes=periods_out, input_size=len(self.features) + 1, hidden_size=hidden_size,
-                              num_layers=n_layers)
+        self.model = lstm(num_classes=periods_out, input_size=input_size, hidden_size=hidden_size,
+                          num_layers=n_layers)
 
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
 
-        tdl.training_loop(n_epochs=n_epochs, lstm=self.model, optimizer=self.optimizer, loss_func=self.loss,
+        tdl.training_loop(n_epochs=n_epochs, lstm=self.model, optimizer=self.optimizer, loss_func=self.loss_func,
                           X_train=self.train_x, y_train=self.train_y, X_test=self.test_x, y_test=self.test_y)
 
         self.training_preds = self.model(self.train_x)
@@ -454,22 +489,48 @@ class dl_model(technical_model):
         return eval_results
 
     def torch_loop(self, n_epochs=200):
-        return tdl.training_loop(self.model, optimizer=self.optimizer, n_epochs=n_epochs, loss_func=self.loss_func,
+        return tdl.training_loop(lstm=self.model, optimizer=self.optimizer, n_epochs=n_epochs, loss_func=self.loss_func,
                                  X_train=self.train_x, y_train=self.train_y, X_test=self.test_x, y_test=self.test_y)
 
     def eval_model(self):
         mse_loss = torch.mean((self.test_preds - self.test_y) ** 2)
         rmse_loss = mse_loss.sqrt()
         std = self.test_y.std()
-        rmse_loss / std
+        mean = self.test_y.mean()
+
 
         eval = {'MSE': mse_loss.item(),
-                'RMSE': rmse_loss.item()}
+                'RMSE': rmse_loss.item(),
+                'RMSE/SD': (rmse_loss/std).item(),
+                'RMSE/MEAN': (rmse_loss/mean).item()}
+
+        print(eval)
 
         return eval
 
+    def detach(self, train_data=False, test_data=True):
+        ret = {'Train': {},
+               'Test': {}
+               }
+        if train_data:
+            ret['Train'].update({'X': self.train_x.detach().cpu().numpy(),
+                                 'y': self.train_y.detach().cpu().numpy(),
+                                 'predict': self.training_preds.detach().cpu().numpy()})
+        if test_data:
+            ret['Test'].update({'X': self.test_x.detach().cpu().numpy(),
+                                'y': self.test_y.detach().cpu().numpy(),
+                                'predict': self.test_preds.detach().cpu().numpy()}
+                               )
 
+        return ret
 
+    def returns_plot(self, test_only=True):
+        if test_only:
+            test_data = self.detach()['Test']
+            plt.scatter(test_data['y'], test_data['predict'])
+            plt.show()
+
+        return
 
 
 
