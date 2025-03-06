@@ -2,6 +2,7 @@ import os
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import torch.nn as nn
 from ml_ensemble.filters import kama, wwma
 from futures_ml import torch_dl as tdl
 from ml_ensemble.tests import eval_model, evaluate_seasonal
