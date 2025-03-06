@@ -7,7 +7,7 @@ from ml_ensemble.tests import eval_model, evaluate_seasonal
 from scipy.signal import find_peaks
 from futures_ml import utils
 from statsmodels.tsa.seasonal import STL, MSTL, seasonal_decompose
-from finance_models.ml_model import ml_model as ml, xgb_params, gbr_params, rfr_params
+from futures_ml.ml_model import ml_model as ml, xgb_params, gbr_params, rfr_params
 
 
 class fft_decomp:
