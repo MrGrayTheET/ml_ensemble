@@ -480,14 +480,13 @@ class dl_model(technical_model):
 
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
 
-        self.training_preds = self.model(self.train_x)
-        self.test_preds = self.model(self.test_x)
+    
 
         eval_results = self.eval_model()
 
         return eval_results
 
-    def torch_loop(self, n_epochs=200):
+    def torch_loop(self, n_epochs=50):
         return tdl.training_loop(lstm=self.model, optimizer=self.optimizer, n_epochs=n_epochs, loss_func=self.loss_func,
                                  X_train=self.train_x, y_train=self.train_y, X_test=self.test_x, y_test=self.test_y)
 
