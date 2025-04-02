@@ -2,9 +2,10 @@
 from statsmodels.tsa.seasonal import seasonal_decompose, STL, MSTL
 import yfinance as yf
 import numpy as np
-from futures_ml.ml_model import  ml_model as ml, gbr_params
-from futures_ml.feature_builder import model_prep as mprep
-from futures_ml.utils import clean_arrays
+from ml_build.ml_model import  ml_model as ml, gbr_params
+from ml_build.dl_features import mbuilder as mprep
+from screener.indicators import atr, tr
+from ml_build.utils import clean_data
 
 
 asset = yf.download('HE=F')
@@ -27,6 +28,7 @@ pre_mod.data['HL_x'] = (pre_mod.data.High - pre_mod.data.Low)/pre_mod.data.Close
 pre_mod.data['resid'] = seasonal_model.resid
 pre_mod.data['10TARGET'] = pre_mod.data.Close.pct_change(-10)
 pre_mod.data['5TARGET'] = pre_mod.data.Close.pct_change(-5)
+pre_mod.data['ATR'] = atr(pre_mod.data, length=7, normalized=True)
 pre_mod.data['Volume_MA'] = pre_mod.data.Volume.rolling(10).mean()
 pre_mod.data['Volume_MA2'] = pre_mod.data.Volume.rolling(5).mean()
 pre_mod.data['Volume_X_2'] = pre_mod.data.Volume - pre_mod.data.Volume_MA2

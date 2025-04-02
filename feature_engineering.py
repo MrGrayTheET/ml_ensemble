@@ -2,6 +2,73 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 from datetime import date, timedelta
+from matplotlib import pyplot as plt
+from scipy.signal import find_peaks
+from filters import wwma
+
+VOL_LOOKBACK = 60
+VOL_TARGET = 0.15
+
+
+def create_labels(prices, future_horizon=1, threshold=0.01):
+    """
+    Create labels for stock price prediction.
+
+    Args:
+        prices (pd.Series): Historical stock prices.
+        future_horizon (int): Number of time steps into the future to predict.
+        threshold (float): Percentage threshold for labeling.
+
+    Returns:
+        pd.Series: Labels (1 for higher, -1 for lower, 0 for flat).
+    """
+    future_prices = prices.shift(-future_horizon)  # Get future prices
+    price_change = (future_prices - prices) / prices  # Calculate percentage change
+
+    # Create labels based on threshold
+    labels = np.where(price_change > threshold,2 ,
+                      np.where(price_change < -threshold, 0, 1))
+
+    # Drop the last `future_horizon` rows (no future price available)
+    labels = labels[:-future_horizon]
+    prices = prices[:-future_horizon]  # Align prices with labels
+
+    return pd.Series(labels, index=prices.index)
+
+
+def calc_returns(price_series, day_offset=1):
+
+    returns = price_series /  price_series.shift(day_offset) - 1.0
+
+    return returns
+
+def calc_daily_vol(returns):
+    vol = returns.ewm(span=VOL_LOOKBACK,
+                       min_periods=VOL_LOOKBACK).std().ffill()
+    return vol
+
+
+def vol_scaled_returns(returns, daily_vol=pd.Series(None)):
+
+    if not len(daily_vol):
+        daily_vol = calc_daily_vol(returns)
+    annualized_vol = daily_vol * np.sqrt(252)
+
+    return returns * VOL_TARGET/annualized_vol.shift(1)
+
+def extract_time_features(data, month=True, day = False, dayofweek=False, year=False):
+    df = data.copy(deep=True)
+
+    if month:
+        df['month'] = df.index.month
+    if day:
+        df['day'] = df.index.day
+    if dayofweek:
+        df['weekday'] = df.index.dayofweek
+    if year:
+        df['year'] = df.index.year
+
+    return df
 
 
 def get_trading_days(start_year, end_year):
@@ -158,3 +225,114 @@ def kama(price, period=10, period_fast=2, period_slow=30):
     kama[kama == 0] = np.nan
 
     return kama
+
+
+def EWMA_Volatility(rets, lam):
+    sq_rets_sp500 = (rets ** 2).values
+    EWMA_var = np.zeros(len(sq_rets_sp500))
+
+    for r in range(1, len(sq_rets_sp500)):
+        EWMA_var[r] = (1 - lam) * sq_rets_sp500[r] + lam * EWMA_var[r - 1]
+
+    EWMA_vol = np.sqrt(EWMA_var * 250)
+    return pd.Series(EWMA_vol, index=rets.index, name="EWMA Vol {}".format(lam))[1:]
+
+class fft_decomp:
+
+    def __init__(self, data):
+
+        self.detrended = False
+        self.data = data.dropna()
+        self.data['ema'] = self.data.Close.ewm(span=3).mean()
+
+    def kama_detrend(self, period=20, fast=2, slow=30):
+        self.detrended_data = (self.data.Close - kama(self.data.Close, period=period, period_fast=fast,
+                                                      period_slow=slow))[period:]
+        self.detrend_method = 'kama'
+        return
+
+    def wwm_detrend(self, period=20):
+        self.detrended_data = self.data.Close - wwma(self.data.Close, n=period)
+        self.detrend_method = 'wwma'
+        return self.detrended_data
+
+    def fft_data(self, detrended=True, d=1, top_n=5, ema=False):
+        if detrended:
+            if ema:
+                data = self.detrended_data.ewm(span=3).mean()
+            else:
+                data = self.detrended_data
+
+            self.detrended = True
+        else:
+            if ema:
+                data = self.data.Close.ewm(span=3).mean()
+            else:
+                data = self.data.Close
+
+            self.detrended = False
+
+        self.res = np.fft.fft(data, axis=0)
+        N = len(data)
+
+        self.freqs = np.fft.fftfreq(len(self.res), d=1 / d)
+        self.magnitude = np.abs(self.res)[:N // 2]
+        self.periods = 1 / self.freqs[:N // 2]
+        self.periods = self.periods[~np.isinf(self.periods)]
+        self.angle = np.angle(self.res)
+
+        peaks, props = find_peaks(self.magnitude, prominence=100)
+        peak_periods = self.periods[peaks]
+        peak_mags = self.magnitude[peaks]
+
+        sorted_indices = np.argsort(peak_mags)[::-1][:top_n]
+        top_periods = peak_periods[sorted_indices]
+        top_mags = peak_mags[sorted_indices]
+        self.fft_df = pd.DataFrame(top_mags, index=top_periods)
+        self.indices = sorted_indices
+        self.fft_df['angle'] = np.angle(self.res)[peaks][self.indices]
+
+        return self.fft_df
+
+    def reconstruct_signal(self):
+        filtered_data = np.zeros_like(self.res)
+        filtered_data[self.indices] = self.res[self.indices]
+        filtered_data[-self.indices] = self.res[-self.indices]
+        reconstructed_signal = np.fft.ifft(filtered_data).real
+
+        plt.figure(figsize=(12, 8))
+        if self.detrended:
+            plot_data = self.detrended_data
+        else:
+            plot_data = self.data.Close
+
+        plt.plot(plot_data.index, plot_data, label='Original')
+        plt.plot(plot_data.index, reconstructed_signal, label='Reconstructed')
+        plt.legend()
+        plt.xlabel("Period")
+        plt.ylabel("Close")
+        plt.show()
+        return
+
+    def extrapolate_signal(self, periods_forward, n_frequencies=5, plot=False, scale_rate=1000):
+        if self.detrended:
+            data = self.detrended_data
+        else:
+            data = self.data
+
+        t_extended = np.linspace(0, (len(data) + periods_forward), len(data) + periods_forward, endpoint=False)
+        t = np.linspace(0, len(data), len(data), endpoint=False)
+        extrapolated_signal = np.zeros_like(t_extended)
+
+        for i in range(n_frequencies):
+            extrapolated_signal += self.fft_df[0].iloc[i] * np.sin(
+                2 * np.pi * (1 / self.fft_df.index[i]) * t_extended + self.fft_df['angle'].iloc[i])
+
+        if plot:
+            plt.figure(figsize=(10, 5))
+            plt.plot(t, data, label="Original Signal")
+            plt.plot(t_extended, extrapolated_signal / scale_rate, label='Extrapolated Signal')
+            plt.axvline(x=t[-1], color='red', linestyle='dotted', label='Extrapolation Start')
+            plt.legend()
+
+        return extrapolated_signal / scale_rate

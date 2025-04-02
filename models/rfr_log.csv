@@ -1,0 +1,2 @@
+eval_datetime,r2_score,mse,rmse,rmse/sd,mape,sorted_features,features
+2025-02-22 16:28:04.463466,[0.4408100304285011],[0.0049953148667235435],[0.07067754145924675],[0.7477900571493973],[166817.03920748422],False,"[['seasonal_1', 'seasonal_2', 'seasonal_3', 'kama_10_x', 'kama_20_x', '50SMA_norm', '100SMA_norm', 'resid', 'mom_21', 'mom_10', 'Volume_MA2', 'trend_x']]"
