@@ -326,7 +326,7 @@ class TimeSeriesGMMClustering:
         return fig
 
     def analyze_time_series_by_cluster(self, price_data: pd.DataFrame,
-                                       features_df: pd.DataFrame) -> Dict[int, pd.DataFrame]:
+                                       features_df: pd.DataFrame, resample_dict=None, resample_period='30min', cluster_sample_method='mean') -> Dict[int, pd.DataFrame]:
         """
         Group time series data by cluster and analyze patterns.
 
@@ -339,25 +339,26 @@ class TimeSeriesGMMClustering:
         """
         # Add interval_id to price_data
 
-        scharts = sc()
-        scharts.resample_logic.update({'interval_id':'last'})
         if type(price_data.index) == pd.DatetimeIndex:
             price_data['idx'] = np.arange(0, len(price_data))
-
-
-        price_data['interval_id'] = price_data['idx'] // self.feature_extractor.interval_size
-
-        price_data = price_data.resample('30m').apply(scharts.resample_logic)
-
+            price_data['interval_id'] = price_data.idx // self.feature_extractor.interval_size
+          
+        
         # Create a mapping from interval_id to cluster
         interval_to_cluster = features_df['cluster'].to_dict()
+                                           
+        else: 
+            price_data['interval_id'] = price_data.index // self.feature_extractor.interval_size
 
+        # Optional resampling
+        
+        if resample_dict is not None:
+            resample_dict.update({'interval_id':'last'})
+            price_data = price_data.resample(resample_period).apply(resample_dict)
+        
+     
         # Add cluster to price_data
         price_data['cluster'] = price_data['interval_id'].map(interval_to_cluster)
-
-
-
-
 
 
         # Group by cluster
@@ -366,5 +367,6 @@ class TimeSeriesGMMClustering:
             cluster_groups[cluster] = price_data[price_data['cluster'] == cluster].copy()
 
         return cluster_groups, price_data
+
 
 
