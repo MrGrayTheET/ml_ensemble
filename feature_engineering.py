@@ -10,6 +10,192 @@ VOL_LOOKBACK = 60
 VOL_TARGET = 0.15
 
 
+def ts_train_test_split(df, test_size=0.2, groups=None):
+    """
+    Split time series data into training and test sets while preserving sequential order.
+
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        The time series dataframe to split
+    test_size : float, default=0.2
+        The proportion of the dataset to include in the test split (0.0 to 1.0)
+    groups : str or list, optional
+        Column name(s) identifying group(s) to split by. If provided, each group will be
+        split separately and then recombined, maintaining sequential order within groups.
+
+    Returns:
+    --------
+    train_df : pandas.DataFrame
+        The training dataset
+    test_df : pandas.DataFrame
+        The test dataset
+    """
+    if groups is None:
+        # Simple case: split the entire dataframe at once
+        split_idx = int(len(df) * (1 - test_size))
+        train_df = df.iloc[:split_idx].copy()
+        test_df = df.iloc[split_idx:].copy()
+        return train_df, test_df
+
+    # Convert single group to list
+    if isinstance(groups, str):
+        groups = [groups]
+
+    # Get unique values for each group
+    group_values = {}
+    for group in groups:
+        group_values[group] = df[group].unique()
+
+    # Initialize empty dataframes for train and test
+    train_dfs = []
+    test_dfs = []
+
+    # Helper function to handle nested groups
+    def process_groups(df, group_idx=0, group_filters={}):
+        if group_idx >= len(groups):
+            # Base case: We've filtered down to a specific combination of all groups
+            filtered_df = df.copy()
+            for k, v in group_filters.items():
+                filtered_df = filtered_df[filtered_df[k] == v]
+
+            # Ensure the data is sorted by index (assuming index represents time)
+            filtered_df = filtered_df.sort_index()
+
+            # Split this specific group's data
+            split_idx = int(len(filtered_df) * (1 - test_size))
+            train_dfs.append(filtered_df.iloc[:split_idx])
+            test_dfs.append(filtered_df.iloc[split_idx:])
+            return
+
+        # Recursive case: process each value of the current group
+        current_group = groups[group_idx]
+        for value in group_values[current_group]:
+            new_filters = group_filters.copy()
+            new_filters[current_group] = value
+            process_groups(df, group_idx + 1, new_filters)
+
+    # Process all group combinations
+    process_groups(df)
+
+    # Concatenate results
+    train_df = pd.concat(train_dfs) if train_dfs else pd.DataFrame()
+    test_df = pd.concat(test_dfs) if test_dfs else pd.DataFrame()
+
+    return train_df, test_df
+
+def reshape_multiindex(df, group_id_column='Ticker', group_name_column='Tickers'):
+    """
+    Reshape a DataFrame with MultiIndex columns so that:
+    - Control groups (second level of columns) become values in a single column
+    - Each independent variable (first level of columns) retains its own column
+    - A new column identifies each control group with integers
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        A DataFrame with MultiIndex columns where the first level is the independent variable
+        and the second level is the control group.
+    group_id_column : str, optional
+        Name for the column that will contain the numeric IDs for each control group.
+    group_name_column : str, optional
+        Name for the column that will contain the names of the control groups.
+    Returns:
+    --------
+    pandas.DataFrame
+        A reshaped DataFrame with independent variables as separate columns and
+        control groups as values in rows with integer identifiers.
+    """
+    # Get the unique values for both column levels
+    indep_vars = df.columns.get_level_values(0).unique()
+    control_groups = df.columns.get_level_values(1).unique()
+    # Create a mapping from control groups to integer IDs
+    group_to_id = {group: i for i, group in enumerate(control_groups)}
+    # Initialize lists to store the data for the new DataFrame
+    all_rows = []
+    # For each row in the original DataFrame
+    for idx, row in df.iterrows():
+        for group in control_groups:
+            # Create a new row for each control group
+            new_row = {
+                group_id_column: group_to_id[group],
+                group_name_column: group
+            }
+            # Add values for each independent variable
+            for var in indep_vars:
+                try:
+                    new_row[var] = row[(var, group)]
+                except:
+                    # Handle case where some combinations might not exist
+                    new_row[var] = np.nan
+            # Store the original row index
+            new_row['Original_Index'] = idx
+            all_rows.append(new_row)
+    # Create a new DataFrame from the collected rows
+    result_df = pd.DataFrame(all_rows)
+    # Set a MultiIndex with the original index and the group ID
+    result_df = result_df.set_index(['Original_Index', group_id_column])
+    return result_df
+
+
+import pandas as pd
+import numpy as np
+
+
+def stack_groups_vertically(df, group_id_column='Group_ID', group_name_column='Group'):
+    """
+    Reshape a DataFrame with MultiIndex columns so that control groups are stacked
+    vertically one after another, with each group identified by an integer ID.
+
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        A DataFrame with MultiIndex columns where the first level is the independent variable
+        and the second level is the control group.
+    group_id_column : str, optional
+        Name for the column that will contain the numeric IDs for each control group.
+    group_name_column : str, optional
+        Name for the column that will contain the names of the control groups.
+
+    Returns:
+    --------
+    pandas.DataFrame
+        A reshaped DataFrame with independent variables as separate columns,
+        control groups stacked vertically, and group identifiers.
+    """
+    # Get the unique values for both column levels
+    indep_vars = df.columns.get_level_values(0).unique()
+    control_groups = df.columns.get_level_values(1).unique()
+
+    # Create a list to hold all the individual group DataFrames
+    group_dfs = []
+
+    # Process each control group separately
+    for i, group in enumerate(control_groups):
+        # Extract columns for this group
+        group_data = pd.DataFrame()
+
+        # For each independent variable, extract the corresponding column for this group
+        for var in indep_vars:
+            group_data[var] = df[(var, group)]
+
+        # Add group identifier columns
+        group_data[group_id_column] = i
+        group_data[group_name_column] = group
+
+        # Add to our list of DataFrames
+        group_dfs.append(group_data)
+
+    # Concatenate all group DataFrames vertically
+    result_df = pd.concat(group_dfs, ignore_index=True)
+
+    # Reorder columns to put identifiers first
+    cols = [group_id_column, group_name_column] + list(indep_vars)
+    result_df = result_df[cols]
+
+    return result_df
+
+
+
 def create_labels(prices, future_horizon=1, threshold=0.01):
     """
     Create labels for stock price prediction.
