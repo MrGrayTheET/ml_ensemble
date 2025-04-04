@@ -3,7 +3,6 @@ import pandas as pd
 from sklearn.mixture import GaussianMixture
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
-from sc_loader import sierra_charts as sc
 import matplotlib.pyplot as plt
 from typing import List, Dict, Tuple, Union, Optional
 
