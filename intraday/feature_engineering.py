@@ -1,13 +1,10 @@
 import numpy as np
-import pandas as pd
-from sc_loader import sierra_charts as scharts
+
 from scipy.signal import find_peaks
 from typing import List, Dict, Tuple, Union, Optional
 from sklearn.mixture import GaussianMixture as gmm
 
-sc = scharts()
 
-data = sc.get_chart('ES_F')
 
 
 class TimeSeriesFeatureExtractor:
