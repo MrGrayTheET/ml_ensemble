@@ -342,13 +342,12 @@ class TimeSeriesGMMClustering:
         if type(price_data.index) == pd.DatetimeIndex:
             price_data['idx'] = np.arange(0, len(price_data))
             price_data['interval_id'] = price_data.idx // self.feature_extractor.interval_size
-          
-        
-        # Create a mapping from interval_id to cluster
-        interval_to_cluster = features_df['cluster'].to_dict()
                                            
         else: 
             price_data['interval_id'] = price_data.index // self.feature_extractor.interval_size
+            
+        # Create a mapping from interval_id to cluster
+        interval_to_cluster = features_df['cluster'].to_dict()
 
         # Optional resampling
         
