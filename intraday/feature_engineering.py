@@ -1,15 +1,8 @@
 import numpy as np
 import pandas as pd
-from sc_loader import sierra_charts as scharts
 from scipy.signal import find_peaks
 from typing import List, Dict, Tuple, Union, Optional
 from sklearn.mixture import GaussianMixture as gmm
-
-sc = scharts()
-
-data = sc.get_chart('ES_F')
-
-
 
 
 class TimeSeriesFeatureExtractor:
@@ -686,7 +679,7 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
             )
             # Merge with existing features
 
-            features_df[['random_effects', 'random_slopes']] = pd.DataFrame.from_dict(me_model.random_effects, orient='ihdex')
+            features_df[['random_effects', 'random_slopes']] = pd.DataFrame.from_dict(me_model.random_effects, orient='index')
         else:
             me_model = None
             print("No peaks detected for mixed-effects modeling")
@@ -717,43 +710,3 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
 
         vol_prediction = self.results['gamlss_model'].predict(X.iloc[:n_steps])
         height_prediction = self.results['mixed_effects_model'].predict(self.results['peak_data'].iloc[:n_steps])
-
-
-
-
-
-
-
-
-
-
-# Example usage
-if __name__ == "__main__":
-    # Create sample multi-asset df
-    np.random.seed(42)
-    assets = data
-    dates = pd.date_range('2020-01-01', periods=100).repeat(3)
-    prices = np.random.normal(100, 10, 300).cumsum()
-
-    # Initialize analyzer
-    analyzer = PeakExtractor(assets, 0.4)
-
-    # Run full analysis pipeline
-    results = analyzer.extract_features()
-
-    # Show feature results
-    print("\nMovement Features:")
-    print(results['features'].head())
-
-    # Show model summaries if available
-    if hasattr(results['gamlss_model'], 'summary'):
-        print("\nGAMLSS Model Summary:")
-        print(results['gamlss_model'].summary())
-    elif hasattr(results['gamlss_model'], 'table'):
-        print("\nGAM Model Results:")
-        print(results['gamlss_model'].table())
-
-    if results['mixed_effects_model'] is not None:
-        print("\nMixed Effects Model Summary:")
-        print(results['mixed_effects_model'].summary())
-
