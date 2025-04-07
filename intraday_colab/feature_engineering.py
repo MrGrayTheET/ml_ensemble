@@ -5,13 +5,14 @@ from scipy.signal import find_peaks
 from typing import List, Dict, Tuple, Union, Optional
 from sklearn.mixture import GaussianMixture as gmm
 
+
 class TimeSeriesFeatureExtractor:
     """
     A class to extract time series features based on the methodology described in Palma et al. (2023b)
     and Parente et al. (2024).
     """
 
-    def __init__(self, df:pd.DataFrame, interval_size: int = 59, ):
+    def __init__(self, df: pd.DataFrame, interval_size: int = 59, ):
         """
         Initialize the feature extractor with the specified interval size.
 
@@ -23,10 +24,8 @@ class TimeSeriesFeatureExtractor:
         self.interval_size = interval_size
         self.df[['open', 'high', 'low', 'close', 'volume']] = self.df[['Open', 'High', 'Low', 'Close', 'Volume']]
         self.df['timestamp'] = df.index
-        self.df.index =  np.arange(0, len(self.df))
-        self.df['interval_id'] = self.df.index//interval_size
-
-
+        self.df.index = np.arange(0, len(self.df))
+        self.df['interval_id'] = self.df.index // interval_size
 
     def extract_features(self, price_data: pd.DataFrame, proposed_features=True,
                          classical_features=False, custom_features=True) -> pd.DataFrame:
@@ -65,38 +64,27 @@ class TimeSeriesFeatureExtractor:
             features['vwap_h'] = grouped.apply(self._extract_high_sub_vwap)
             features['vwap_l'] = grouped.apply(self._extract_vwap_sub_low)
 
-
-
         features['close_pct_change'] = grouped.apply(self._calculate_close_pct_change)
 
         return features
 
-    def _extract_high_sub_vwap(self,group):
+    def _extract_high_sub_vwap(self, group):
         high = np.max(group['High'])
         group_hlc = (group['High'] + group['Low'] + group['Close']) / 3
         group['vwap'] = (group_hlc * group['Volume']).cumsum() / group['Volume'].cumsum()
         vwap_h = high - group['vwap']
-        normalized = np.log(vwap_h/group_hlc)
+        normalized = np.log(vwap_h / group_hlc)
         return normalized[-1]
 
     def _extract_vwap_sub_low(self, group):
         low = np.min(group['Low'])
         group_hlc = (group['High'] + group['Low'] + group['Close']) / 3
-        group['vwap'] =  (group_hlc * group['Volume']).cumsum() / group['Volume'].cumsum()
+        group['vwap'] = (group_hlc * group['Volume']).cumsum() / group['Volume'].cumsum()
         vwap_l = group['vwap'] - low
 
-        normalized = np.log(vwap_l/group_hlc)
+        normalized = np.log(vwap_l / group_hlc)
 
         return normalized[-1]
-
-
-
-
-
-
-
-
-
 
     def _extract_peak_curvature(self, group: pd.DataFrame) -> float:
         """
@@ -397,7 +385,6 @@ def normalize_x(x_data, method='both'):
     x = x_data.values.reshape(-1, 1)
     results = {}
 
-
     if method in ('minmax', 'both'):
         minmax = MinMaxScaler().fit_transform(x).flatten()
         results['x_minmax'] = minmax
@@ -424,7 +411,8 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
         super().__init__(df, interval_size=interval)
         if 'Close' in self.df.columns:
             pass
-        else: self.df['close'] = self.df.Last
+        else:
+            self.df['close'] = self.df.Last
 
         self.price_col = 'close'
         self.prominence = prominence
@@ -442,7 +430,7 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
 
             # Movement-inspired features
             flat_periods = (returns.abs() < 0.001).sum()  # Idle time equivalent
-            total_movement = np.abs(prices.diff()).sum() # Path length equivalent, normalized
+            total_movement = np.abs(prices.diff()).sum()  # Path length equivalent, normalized
             volatility = log_returns.std() * np.sqrt(252)
 
             # Direction changes (angle shift equivalent)
@@ -511,13 +499,11 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
 
         scaled_df = pd.DataFrame(columns=features_df.columns)
 
-
         scaler_1 = MinMaxScaler()
         scaler_2 = StandardScaler()
-            
+
         scaled_df[numeric_cols] = scaler_1.fit_transform(df[numeric_cols])
         scaled_df[numeric_cols] = scaler_2.fit_transform(scaled_df[numeric_cols])
-
 
         return scaled_df
 
@@ -529,7 +515,7 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
         as an approximation with location and scale parameters
         """
         try:
-            from pygam import LinearGAM, s,l,f
+            from pygam import LinearGAM, s, l, f
             from statsmodels.gam.api import GLMGam
             from statsmodels.gam.smooth_basis import BSplines
             X = features_df.select_dtypes(include=[np.number]).ffill().dropna()
@@ -553,17 +539,16 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
                             , family=family).fit()
             return model.fit()
 
-    def fit_mixed_effects(self, peak_df,endog_col='height', exogs=['x_minmax', 'x_zscore'], exog_re='curvature'):
+    def fit_mixed_effects(self, peak_df, endog_col='height', exogs=['x_minmax', 'x_zscore'], exog_re='curvature'):
         """
-        Fit Linear Mixed-Effects Model to peak df
-        Example formula: 'height ~ x_minmax + x_zscore)'
+
+        :type exogs: object
         """
-        model_df = peak_df[[self.group_col, endog_col, exog_re]+exogs].copy().dropna()
+        model_df = peak_df[[self.group_col, endog_col, exog_re] + exogs].copy().dropna()
         model = sm.MixedLM(
             endog=model_df['height'],
-            exog=sm.add_constant(model_df[['x_minmax', 'x_zscore']]),
+            exog=sm.add_constant(model_df[[exogs[0], exogs[1]]]),
             groups=model_df['Group'],
-            exog_re=sm.add_constant(model_df['curvature'])
         )
         if type(model) == Tuple:
             model = model[0]
@@ -630,14 +615,14 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
         print("\nCalculating peak magnitude features...")
         features_df = features_df.ffill().dropna()
         peak_magnitude_features = self.calculate_peak_magnitude_features()
-        features_df[['peak_avg_magnitude', 'peak_pct_change']] = peak_magnitude_features[['peak_avg_magnitude', 'peak_pct_change']]
-        self.results.update({'features':features_df})
+        features_df[['peak_avg_magnitude', 'peak_pct_change']] = peak_magnitude_features[
+            ['peak_avg_magnitude', 'peak_pct_change']]
+        self.results.update({'features': features_df})
 
         # 2. Normalize features
 
         normalized_df = self.normalize_features(features_df.select_dtypes(include=[np.number]))
-        self.results.update({'normalized_features':normalized_df})
-
+        self.results.update({'normalized_features': normalized_df})
 
         # 3. Fit GAMLSS (approximation)
         print("\nFitting GAMLSS (location-scale model)...")
@@ -665,33 +650,26 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
                         'peak_position': peak
                     })
 
-
         peak_df = pd.DataFrame(peak_data)
 
-        normalized_x =  normalize_x(peak_df['curvature'])
+        normalized_x = normalize_x(peak_df['curvature'])
 
         x_df = pd.concat([peak_df, normalized_x], axis=1)
-        self.results.update({'peak_data':x_df})
-
-
+        self.results.update({'peak_data': x_df})
 
         # 5. Fit mixed-effects model
         if len(x_df) > 0:
             print("\nFitting mixed-effects model...")
             me_model = self.fit_mixed_effects(
                 x_df,
-                formula=f'height ~ x_zscore + x_minmax',
-                re_formula='~curvature'
             )
             # Merge with existing features
 
-            features_df[['random_effects', 'random_slopes']] = pd.DataFrame.from_dict(me_model.random_effects, orient='ihdex')
+            features_df[['random_effects', 'random_slopes']] = pd.DataFrame.from_dict(me_model.random_effects,
+                                                                                      orient='ihdex')
         else:
             me_model = None
             print("No peaks detected for mixed-effects modeling")
-
-
-
 
         self.results.update({
             'features': features_df,
@@ -702,14 +680,14 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
             'peak_magnitude_features': peak_magnitude_features
         })
 
-
         return self.results
 
     def predict(self, use_normalized_features=True, n_steps=None):
         peak_df = self.results['peak_data']
         if use_normalized_features:
             df = self.results['normalized_features']
-        else: df = self.results['features']
+        else:
+            df = self.results['features']
 
         X = df.select_dtypes(include=[np.number]).ffill().dropna()
         if n_steps is None:
@@ -719,18 +697,10 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
         height_prediction = self.results['mixed_effects_model'].predict(self.results['peak_data'].iloc[:n_steps])
 
 
-
-
-
-
-
-
-
-
 # Example usage
 if __name__ == "__main__":
     # Create sample multi-asset df
-    np.random.seed(42)
+    data = np.random.seed(42)
     assets = data
     dates = pd.date_range('2020-01-01', periods=100).repeat(3)
     prices = np.random.normal(100, 10, 300).cumsum()
@@ -753,8 +723,6 @@ if __name__ == "__main__":
         print("\nGAM Model Results:")
         print(results['gamlss_model'].table())
 
-
     if results['mixed_effects_model'] is not None:
         print("\nMixed Effects Model Summary:")
         print(results['mixed_effects_model'].summary())
-
