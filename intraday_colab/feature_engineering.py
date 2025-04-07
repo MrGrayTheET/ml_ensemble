@@ -507,38 +507,6 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
 
         return scaled_df
 
-    def fit_gamlss(self, features_df: object, formula: object, family: object = sm.families.Gamma()) -> object:
-        """
-        Fit Generalized Additive Model for Location, Scale and Shape (GAMLSS)
-
-        Note: Python doesn't have exact GAMLSS equivalent, so we use statsmodels GAM
-        as an approximation with location and scale parameters
-        """
-        try:
-            from pygam import LinearGAM, s, l, f
-            from statsmodels.gam.api import GLMGam
-            from statsmodels.gam.smooth_basis import BSplines
-            X = features_df.select_dtypes(include=[np.number]).ffill().dropna()
-
-            # Linear term for flat_periods, splines for others
-            # This is a simplified approximation of GAMLSS
-            print("Using pygam for GAM implementation (simplified approximation of GAMLSS)")
-
-            # Select numeric features only
-            y = X['volatility']
-
-            gam = LinearGAM(s(0) + s(1) + s(2), fit_intercept=True)
-            gam.distribution = 'invgaussian'
-            gam.link = 'identity'
-            gam.gridsearch(X.values, y)
-
-            return gam
-        except ImportError:
-            print("pygam not available, falling back to statsmodels GLM")
-            model = smf.glm(formula, data=X.ffill()
-                            , family=family).fit()
-            return model.fit()
-
     def fit_mixed_effects(self, peak_df, endog_col='height', exogs=['x_minmax', 'x_zscore'], exog_re='curvature'):
         """
 
@@ -624,14 +592,6 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
         normalized_df = self.normalize_features(features_df.select_dtypes(include=[np.number]))
         self.results.update({'normalized_features': normalized_df})
 
-        # 3. Fit GAMLSS (approximation)
-        print("\nFitting GAMLSS (location-scale model)...")
-        gamlss_model = self.fit_gamlss(
-            features_df,
-            formula='volatility ~ total_movement + flat_periods + total_angle_shift',
-            family=sm.families.family.InverseGaussian()
-        )
-
         # 4. Prepare peak df for mixed-effects modeling
         print("\nPreparing peak df for mixed-effects modeling...")
         peak_data = []
@@ -657,10 +617,10 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
         x_df = pd.concat([peak_df, normalized_x], axis=1)
         self.results.update({'peak_data': x_df})
 
-        # 5. Fit mixed-effects model
+        # 4. Fit mixed-effects model
         if len(x_df) > 0:
             print("\nFitting mixed-effects model...")
-            me_model = self.fit_mixed_effects(
+            self.me_model = self.fit_mixed_effects(
                 x_df,
             )
             # Merge with existing features
@@ -674,7 +634,6 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
         self.results.update({
             'features': features_df,
             'normalized_features': normalized_df,
-            'gamlss_model': gamlss_model,
             'peak_data': peak_df,
             'mixed_effects_model': me_model,
             'peak_magnitude_features': peak_magnitude_features
@@ -693,7 +652,6 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
         if n_steps is None:
             n_steps = len(X)
 
-        vol_prediction = self.results['gamlss_model'].predict(X.iloc[:n_steps])
         height_prediction = self.results['mixed_effects_model'].predict(self.results['peak_data'].iloc[:n_steps])
 
 
@@ -714,14 +672,6 @@ if __name__ == "__main__":
     # Show feature results
     print("\nMovement Features:")
     print(results['features'].head())
-
-    # Show model summaries if available
-    if hasattr(results['gamlss_model'], 'summary'):
-        print("\nGAMLSS Model Summary:")
-        print(results['gamlss_model'].summary())
-    elif hasattr(results['gamlss_model'], 'table'):
-        print("\nGAM Model Results:")
-        print(results['gamlss_model'].table())
 
     if results['mixed_effects_model'] is not None:
         print("\nMixed Effects Model Summary:")

@@ -71,7 +71,8 @@ class TimeSeriesGMMClustering:
             features = res['features']
             if selected_features is None:
                 self.selected_features = features.columns[:, 1:]
-                features['interval_id'] = features.index
+                if type(features['interval_id']) == str:
+                    features['interval_id'] = features.index
             else:
                 self.selected_features = selected_features
 
@@ -86,9 +87,9 @@ class TimeSeriesGMMClustering:
 
             self.data = self.feature_extractor.data
 
-        # Select features for clustering
+            # Select features for clustering
             if selected_features is None:
-            # Default to using all features
+                # Default to using all features
                 self.selected_features = []
                 if proposed_features:
                     self.selected_features += self.proposed_features
@@ -96,7 +97,7 @@ class TimeSeriesGMMClustering:
                     self.selected_features += self.classical_features
                 if custom_features: self.selected_features += self.classical_features
             else:
-            # Make sure all requested features exist
+                # Make sure all requested features exist
                 available_features = features.columns.tolist()
                 self.selected_features = [f for f in selected_features if f in available_features]
 
