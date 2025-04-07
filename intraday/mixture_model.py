@@ -68,6 +68,14 @@ class TimeSeriesGMMClustering:
         if type(self.feature_extractor) == PeakExtractor:
             self._extractor = self.feature_extractor(price_data)
             res = self._extractor.extract_features()
+            features = res['features']
+            if selected_features is None:
+                self.selected_features = features.columns[:, 1:]
+                features['interval_id'] = features.index
+            else:
+                self.selected_features = selected_features
+
+
 
 
 
@@ -76,28 +84,28 @@ class TimeSeriesGMMClustering:
                                                                proposed_features=proposed_features,
                                                                classical_features=classical)
 
-        self.data = self.feature_extractor.data
+            self.data = self.feature_extractor.data
 
         # Select features for clustering
-        if selected_features is None:
+            if selected_features is None:
             # Default to using all features
-            self.selected_features = []
-            if proposed_features:
-                self.selected_features += self.proposed_features
-            if classical:
-                self.selected_features += self.classical_features
-            if custom_features: self.selected_features += self.classical_features
-        else:
+                self.selected_features = []
+                if proposed_features:
+                    self.selected_features += self.proposed_features
+                if classical:
+                    self.selected_features += self.classical_features
+                if custom_features: self.selected_features += self.classical_features
+            else:
             # Make sure all requested features exist
-            available_features = features.columns.tolist()
-            self.selected_features = [f for f in selected_features if f in available_features]
+                available_features = features.columns.tolist()
+                self.selected_features = [f for f in selected_features if f in available_features]
 
-            if len(self.selected_features) < len(selected_features):
-                missing = set(selected_features) - set(self.selected_features)
-                print(f"Warning: Some requested features are not available: {missing}")
+                if len(self.selected_features) < len(selected_features):
+                    missing = set(selected_features) - set(self.selected_features)
+                    print(f"Warning: Some requested features are not available: {missing}")
 
-            if not self.selected_features:
-                raise ValueError("No valid features selected for clustering")
+                if not self.selected_features:
+                    raise ValueError("No valid features selected for clustering")
 
         # Return selected features
         return features[self.selected_features]

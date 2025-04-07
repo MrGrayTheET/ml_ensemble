@@ -399,6 +399,24 @@ import warnings
 warnings.filterwarnings('ignore')
 
 
+def normalize_x(x_data, method='both'):
+    """Apply minmax and/or z-score normalization"""
+    x = x_data.values.reshape(-1, 1)
+    results = {}
+
+
+    if method in ('minmax', 'both'):
+        minmax = MinMaxScaler().fit_transform(x).flatten()
+        results['x_minmax'] = minmax
+
+    if method in ('zscore', 'both'):
+        zscore = StandardScaler().fit_transform(x).flatten()
+        results['x_zscore'] = zscore
+    df = pd.DataFrame(results)
+
+    return df
+
+
 class PeakExtractor(TimeSeriesFeatureExtractor):
     def __init__(self, df, interval=59, prominence=0.7):
         """
@@ -545,9 +563,9 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
     def fit_mixed_effects(self, peak_df, formula, re_formula='~curvature'):
         """
         Fit Linear Mixed-Effects Model to peak df
-        Example formula: 'height ~ curvature + (1 + curvature|group)'
+        Example formula: 'height ~ x_minmax + x_zscore)'
         """
-        model_df = peak_df[[self.group_col, 'height', 'curvature']].copy().dropna()
+        model_df = peak_df[[self.group_col, 'height', 'curvature', 'x_minmax', 'x_zscore']].copy().dropna()
         model = smf.mixedlm(formula, data=model_df, groups=model_df[self.group_col],re_formula=re_formula)
         if type(model) == Tuple:
             model = model[0]
@@ -609,16 +627,18 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
         :param **kwargs:
         """
         # 1. Calculate features
+        self.results = {}
         features_df = self.calculate_movement_features()
         print("\nCalculating peak magnitude features...")
         features_df = features_df.ffill().dropna()
         peak_magnitude_features = self.calculate_peak_magnitude_features()
         features_df[['peak_avg_magnitude', 'peak_pct_change']] = peak_magnitude_features[['peak_avg_magnitude', 'peak_pct_change']]
-
+        self.results.update({'features':features_df})
 
         # 2. Normalize features
 
         normalized_df = self.normalize_features(features_df.select_dtypes(include=[np.number]))
+        self.results.update({'normalized_features':normalized_df})
 
 
         # 3. Fit GAMLSS (approximation)
@@ -647,25 +667,30 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
                         'peak_position': peak
                     })
 
+
         peak_df = pd.DataFrame(peak_data)
+
+        normalized_x =  normalize_x(peak_df['curvature'])
+
+        x_df = pd.concat([peak_df, normalized_x], axis=1)
+
 
 
         # 5. Fit mixed-effects model
-        if len(peak_df) > 0:
+        if len(x_df) > 0:
             print("\nFitting mixed-effects model...")
             me_model = self.fit_mixed_effects(
-                peak_df,
-                formula=f'height ~ curvature',
+                x_df,
+                formula=f'height ~ x_zscore + x_minmax',
                 re_formula='~curvature'
             )
+            # Merge with existing features
+
+            features_df[['random_effects', 'random_slopes']] = pd.DataFrame.from_dict(me_model.random_effects, orient='ihdex')
         else:
             me_model = None
             print("No peaks detected for mixed-effects modeling")
-        if type(me_model) != None:
-            features_df[['random_effects', 'random_slopes']] = pd.DataFrame.from_dict(me_model.random_effects)
 
-
-        # Merge with existing features
 
 
         self.results = {
@@ -711,7 +736,7 @@ if __name__ == "__main__":
     prices = np.random.normal(100, 10, 300).cumsum()
 
     # Initialize analyzer
-    analyzer = PeakExtractor(assets, 0.7)
+    analyzer = PeakExtractor(assets, 0.4)
 
     # Run full analysis pipeline
     results = analyzer.extract_features()
