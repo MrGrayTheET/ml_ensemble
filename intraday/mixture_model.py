@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from typing import List, Dict, Tuple, Union, Optional
 
 # Import the TimeSeriesFeatureExtractor class that we created earlier
-from intraday.feature_engineering import TimeSeriesFeatureExtractor
+from intraday.feature_engineering import TimeSeriesFeatureExtractor, PeakExtractor
 
 
 class TimeSeriesGMMClustering:
@@ -17,7 +17,8 @@ class TimeSeriesGMMClustering:
 
     proposed_features = ['peak_curvature', 'peak_average_magnitude', 'percentage_change', 'close_pct_change']
     classical_features = ['rsi', 'close_pct_change', 'close_zscore', 'volume_zscore', 'ma_ratio']
-
+    custom_features = ['vwap_h', 'vwap_l']
+    movement_features = []
 
     def __init__(self, feature_extractor=None, n_components=3, random_state=42):
         """
@@ -30,7 +31,7 @@ class TimeSeriesGMMClustering:
         """
         self.data = None
 
-        self.feature_extractor = feature_extractor or TimeSeriesFeatureExtractor()
+        self.feature_extractor = feature_extractor or TimeSeriesFeatureExtractor
         self.n_components = n_components
         self.random_state = random_state
         self.gmm = GaussianMixture(
@@ -45,6 +46,7 @@ class TimeSeriesGMMClustering:
     def extract_and_select_features(self, price_data: pd.DataFrame,
                                     proposed_features=True,
                                     classical=False,
+                                    custom_features=True,
                                     selected_features=None) -> pd.DataFrame:
         """
         Extract features and select the ones to use for clustering.
@@ -55,21 +57,36 @@ class TimeSeriesGMMClustering:
 
         Returns:
             DataFrame with selected features
+            :param price_data:
+            :param classical:
+            :param custom_features:
             :param classical_features:
             :param proposed_features:
             :param selected_features:
         """
         # Extract all features
-        features = self.feature_extractor.extract_features(price_data, proposed_features=proposed_features, classical_features=classical)
+        if type(self.feature_extractor) == PeakExtractor:
+            self._extractor = self.feature_extractor(price_data)
+            res = self._extractor.extract_features()
+
+
+
+        else:
+            features = self.feature_extractor.extract_features(price_data,
+                                                               proposed_features=proposed_features,
+                                                               classical_features=classical)
+
         self.data = self.feature_extractor.data
 
         # Select features for clustering
         if selected_features is None:
             # Default to using all features
-            if proposed_features and not classical:
-                self.selected_features = self.proposed_features
-            elif classical and not proposed_features:
-                self.selected_features = self.classical_features
+            self.selected_features = []
+            if proposed_features:
+                self.selected_features += self.proposed_features
+            if classical:
+                self.selected_features += self.classical_features
+            if custom_features: self.selected_features += self.classical_features
         else:
             # Make sure all requested features exist
             available_features = features.columns.tolist()
@@ -85,7 +102,8 @@ class TimeSeriesGMMClustering:
         # Return selected features
         return features[self.selected_features]
 
-    def fit(self, price_data: pd.DataFrame, proposed_features=True, classical_features=False, selected_features: List[str] = None,
+    def fit(self, price_data: pd.DataFrame, proposed_features=True, classical_features=False,
+            selected_features: List[str] = None,
             use_pca: bool = False, n_components_pca: int = 2) -> Tuple[pd.DataFrame, np.ndarray]:
         """
         Fit the GMM model to the extracted and selected features.
@@ -99,14 +117,17 @@ class TimeSeriesGMMClustering:
         Returns:
             Tuple of (features_df, cluster_labels)
         """
+
         # Extract and select features
-        features_df = self.extract_and_select_features(price_data, proposed_features,classical=classical_features, selected_features=None)
+        features_df = self.extract_and_select_features(price_data, proposed_features, classical=classical_features,
+                                                       selected_features=None)
 
         # Handle missing values
-        features_df = features_df.fillna(0)
+        self.features_df = features_df.fillna(0)
+        features_df = self.features_df
 
         # Scale features
-        X = self.scaler.fit_transform(features_df)
+        X = self.scaler.fit_transform(self.features_df[self.selected_features])
 
         # Apply PCA if requested
         if use_pca:
@@ -139,7 +160,7 @@ class TimeSeriesGMMClustering:
             Array of cluster labels
         """
         # Extract and select features
-        features_df = self.extract_and_select_features(price_data, selected_features=[])
+        features_df = self.features_df
 
         # Handle missing values
         features_df = features_df.fillna(0)
@@ -154,7 +175,7 @@ class TimeSeriesGMMClustering:
         # Predict cluster labels
         return self.gmm.predict(X)
 
-    def get_cluster_statistics(self, features_df: pd.DataFrame) -> pd.DataFrame:
+    def get_cluster_statistics(self) -> pd.DataFrame:
         """
         Calculate statistics for each cluster.
 
@@ -165,16 +186,19 @@ class TimeSeriesGMMClustering:
             DataFrame with cluster statistics
         """
         # Group by cluster and calculate statistics
+        features_df = self.features_df
         cluster_stats = features_df.groupby('cluster').agg(['mean', 'std', 'min', 'max', 'count'])
+        X = self.scaler.transform(features_df[self.selected_features])
+
+        if self.pca is not None:
+            X = self.pca.transform(X)
 
         # Calculate BIC and AIC
         cluster_stats.loc['model_metrics', ('cluster', 'count')] = len(features_df)
         cluster_stats.loc['model_metrics', ('cluster', 'mean')] = self.gmm.n_components
         cluster_stats.loc['model_metrics', ('cluster', 'std')] = 0
-        cluster_stats.loc['model_metrics', ('cluster', 'min')] = self.gmm.bic(
-            self.scaler.transform(features_df[self.selected_features].fillna(0)))
-        cluster_stats.loc['model_metrics', ('cluster', 'max')] = self.gmm.aic(
-            self.scaler.transform(features_df[self.selected_features].fillna(0)))
+        cluster_stats.loc['model_metrics', ('cluster', 'min')] = self.gmm.bic(X)
+        cluster_stats.loc['model_metrics', ('cluster', 'max')] = self.gmm.aic(X)
 
         return cluster_stats
 
@@ -249,6 +273,8 @@ class TimeSeriesGMMClustering:
         return fig
 
     def find_optimal_clusters(self, price_data: pd.DataFrame, selected_features: List[str] = None,
+                              proposed_features=True,
+                              classical_features=False,
                               max_components: int = 10) -> Dict:
         """
         Find the optimal number of clusters using BIC and AIC.
@@ -262,7 +288,9 @@ class TimeSeriesGMMClustering:
             Dictionary with BIC and AIC values for each number of components
         """
         # Extract and select features
-        features_df = self.extract_and_select_features(price_data, selected_features, selected_features=[])
+        features_df = self.extract_and_select_features(price_data, proposed_features=proposed_features,
+                                                       classical=classical_features,
+                                                       selected_features=self.selected_features)
 
         # Handle missing values
         features_df = features_df.fillna(0)
@@ -325,7 +353,8 @@ class TimeSeriesGMMClustering:
         return fig
 
     def analyze_time_series_by_cluster(self, price_data: pd.DataFrame,
-                                       features_df: pd.DataFrame, resample_dict=None, resample_period='30min', cluster_sample_method='mean') -> Dict[int, pd.DataFrame]:
+                                       features_df: pd.DataFrame, resample_dict=None, resample_period='30min',
+                                       cluster_sample_method='mean') -> Dict[int, pd.DataFrame]:
         """
         Group time series data by cluster and analyze patterns.
 
@@ -341,23 +370,21 @@ class TimeSeriesGMMClustering:
         if type(price_data.index) == pd.DatetimeIndex:
             price_data['idx'] = np.arange(0, len(price_data))
             price_data['interval_id'] = price_data.idx // self.feature_extractor.interval_size
-                                           
-        else: 
+
+        else:
             price_data['interval_id'] = price_data.index // self.feature_extractor.interval_size
-            
+
         # Create a mapping from interval_id to cluster
         interval_to_cluster = features_df['cluster'].to_dict()
 
         # Optional resampling
-        
+
         if resample_dict is not None:
-            resample_dict.update({'interval_id':'last'})
+            resample_dict.update({'interval_id': 'last'})
             price_data = price_data.resample(resample_period).apply(resample_dict)
-        
-     
+
         # Add cluster to price_data
         price_data['cluster'] = price_data['interval_id'].map(interval_to_cluster)
-
 
         # Group by cluster
         cluster_groups = {}
@@ -365,6 +392,3 @@ class TimeSeriesGMMClustering:
             cluster_groups[cluster] = price_data[price_data['cluster'] == cluster].copy()
 
         return cluster_groups, price_data
-
-
-
