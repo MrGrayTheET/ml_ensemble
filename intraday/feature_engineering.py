@@ -1,8 +1,15 @@
 import numpy as np
 import pandas as pd
+from sc_loader import sierra_charts as scharts
 from scipy.signal import find_peaks
 from typing import List, Dict, Tuple, Union, Optional
 from sklearn.mixture import GaussianMixture as gmm
+
+sc = scharts()
+
+data = sc.get_chart('ES_F')
+
+
 
 
 class TimeSeriesFeatureExtractor:
@@ -553,13 +560,18 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
                             , family=family).fit()
             return model.fit()
 
-    def fit_mixed_effects(self, peak_df, formula, re_formula='~curvature'):
+    def fit_mixed_effects(self, peak_df,endog_col='height', exogs=['x_minmax', 'x_zscore'], exog_re='curvature'):
         """
         Fit Linear Mixed-Effects Model to peak df
         Example formula: 'height ~ x_minmax + x_zscore)'
         """
-        model_df = peak_df[[self.group_col, 'height', 'curvature', 'x_minmax', 'x_zscore']].copy().dropna()
-        model = smf.mixedlm(formula, data=model_df, groups=model_df[self.group_col],re_formula=re_formula)
+        model_df = peak_df[[self.group_col, endog_col, exog_re]+exogs].copy().dropna()
+        model = sm.MixedLM(
+            endog=model_df['height'],
+            exog=sm.add_constant(model_df[['x_minmax', 'x_zscore']]),
+            groups=model_df['Group'],
+            exog_re=sm.add_constant(model_df['curvature'])
+        )
         if type(model) == Tuple:
             model = model[0]
 
@@ -666,6 +678,7 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
         normalized_x =  normalize_x(peak_df['curvature'])
 
         x_df = pd.concat([peak_df, normalized_x], axis=1)
+        self.results.update({'peak_data':x_df})
 
 
 
@@ -679,21 +692,22 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
             )
             # Merge with existing features
 
-            features_df[['random_effects', 'random_slopes']] = pd.DataFrame.from_dict(me_model.random_effects, orient='index')
+            features_df[['random_effects', 'random_slopes']] = pd.DataFrame.from_dict(me_model.random_effects, orient='ihdex')
         else:
             me_model = None
             print("No peaks detected for mixed-effects modeling")
 
 
 
-        self.results = {
+
+        self.results.update({
             'features': features_df,
             'normalized_features': normalized_df,
             'gamlss_model': gamlss_model,
             'peak_data': peak_df,
             'mixed_effects_model': me_model,
             'peak_magnitude_features': peak_magnitude_features
-        }
+        })
 
 
         return self.results
@@ -710,3 +724,43 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
 
         vol_prediction = self.results['gamlss_model'].predict(X.iloc[:n_steps])
         height_prediction = self.results['mixed_effects_model'].predict(self.results['peak_data'].iloc[:n_steps])
+
+
+
+
+
+
+
+
+
+
+# Example usage
+if __name__ == "__main__":
+    # Create sample multi-asset df
+    np.random.seed(42)
+    assets = data
+    dates = pd.date_range('2020-01-01', periods=100).repeat(3)
+    prices = np.random.normal(100, 10, 300).cumsum()
+
+    # Initialize analyzer
+    analyzer = PeakExtractor(assets, 0.4)
+
+    # Run full analysis pipeline
+    results = analyzer.extract_features()
+
+    # Show feature results
+    print("\nMovement Features:")
+    print(results['features'].head())
+
+    # Show model summaries if available
+    if hasattr(results['gamlss_model'], 'summary'):
+        print("\nGAMLSS Model Summary:")
+        print(results['gamlss_model'].summary())
+    elif hasattr(results['gamlss_model'], 'table'):
+        print("\nGAM Model Results:")
+        print(results['gamlss_model'].table())
+
+    if results['mixed_effects_model'] is not None:
+        print("\nMixed Effects Model Summary:")
+        print(results['mixed_effects_model'].summary())
+
