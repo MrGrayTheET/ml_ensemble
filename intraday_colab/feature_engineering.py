@@ -617,25 +617,27 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
         x_df = pd.concat([peak_df, normalized_x], axis=1)
         self.results.update({'peak_data': x_df})
 
-        # 4. Fit mixed-effects model
-        if len(x_df) > 0:
-            print("\nFitting mixed-effects model...")
-            self.me_model = self.fit_mixed_effects(
-                x_df,
-            )
-            # Merge with existing features
+        x_df['minute']
 
-            features_df[['random_effects', 'random_slopes']] = pd.DataFrame.from_dict(me_model.random_effects,
-                                                                                      orient='ihdex')
-        else:
-            me_model = None
-            print("No peaks detected for mixed-effects modeling")
+        #
+        # # 4. Fit mixed-effects model
+        # if len(x_df) > 0:
+        #     print("\nFitting mixed-effects model...")
+        #     self.me_model = self.fit_mixed_effects(
+        #         x_df,
+        #     )
+        #     # Merge with existing features
+        #
+        #     features_df[['random_effects', 'random_slopes']] = pd.DataFrame.from_dict(me_model.random_effects,
+        #                                                                               orient='ihdex')
+        # else:
+        #     me_model = None
+        #     print("No peaks detected for mixed-effects modeling")
 
         self.results.update({
             'features': features_df,
             'normalized_features': normalized_df,
             'peak_data': peak_df,
-            'mixed_effects_model': me_model,
             'peak_magnitude_features': peak_magnitude_features
         })
 
@@ -655,7 +657,7 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
         height_prediction = self.results['mixed_effects_model'].predict(self.results['peak_data'].iloc[:n_steps])
 
 
-def obtain_peak_hess(data):
+def obtain_peak_hess(data, groupby='hour'):
     """Extract peaks and curvature from financial time series
 
     This function extracts peaks and curvature
@@ -680,7 +682,7 @@ def obtain_peak_hess(data):
         data.
     """
 
-    dat = data.groupby('Minute')
+    dat = data.groupby(groupby)
     peak = {name: [] for name in dat.groups}
     peak_index = {name: [] for name in dat.groups}
     hess = {name: [] for name in dat.groups}
