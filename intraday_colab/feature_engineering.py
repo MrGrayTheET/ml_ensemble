@@ -617,7 +617,6 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
         x_df = pd.concat([peak_df, normalized_x], axis=1)
         self.results.update({'peak_data': x_df})
 
-        x_df['minute']
 
         #
         # # 4. Fit mixed-effects model
@@ -655,6 +654,7 @@ class PeakExtractor(TimeSeriesFeatureExtractor):
             n_steps = len(X)
 
         height_prediction = self.results['mixed_effects_model'].predict(self.results['peak_data'].iloc[:n_steps])
+
 
 
 def obtain_peak_hess(data, groupby='hour'):
@@ -707,7 +707,7 @@ def obtain_peak_hess(data, groupby='hour'):
 
     peak_hess = []
     for name in dat.groups:
-        peak_hess.append(pd.DataFrame({'Minute': float(name),
+        peak_hess.append(pd.DataFrame({groupby: float(name),
                                        'peak': peak[name],
                                        'hess': hess[name]}))
 
@@ -721,7 +721,7 @@ def obtain_peak_hess(data, groupby='hour'):
     return res
 
 
-def collect_peak_parameters(peak_hess_data):
+def collect_peak_parameters(peak_hess_data, group_by='Minute'):
     """Linear model' slope and intercept for peak and curvature
 
     This function obtains the Linear model' slope and intercept
@@ -758,37 +758,40 @@ def collect_peak_parameters(peak_hess_data):
     print("\nPeak Parameters:")
     print(peak_parameters)
     """
-    peak_curvature_parameters = peak_hess_data['result'].groupby('Minute').agg(
+    peak_curvature_parameters = peak_hess_data['result'].groupby(group_by).agg(
         average_peak_magnitude=('peak', 'mean'),
         average_peak_curvature=('hess', 'mean')
-    ).reset_index()
+    )
 
     n_peaks = [len(peaks) for peaks in peak_hess_data['peak'].values()]
-    peaks_perseccond_data = \
-        pd.DataFrame({'Minute': list(peak_hess_data['peak'].keys()),
+    peaks_persecond_data = \
+        pd.DataFrame({group_by: list(peak_hess_data['peak'].keys()),
                                           'n_peaks': n_peaks})
-    peaks_perseccond_data['persecond'] = \
-        peaks_perseccond_data['n_peaks'] / len(list(peak_hess_data['dat'])[0])
+    peaks_persecond_data['persecond'] = \
+        peaks_persecond_data['n_peaks'] / len(list(peak_hess_data['dat'])[0])
 
-    Mixed_Models_data = peak_hess_data['result'].groupby('Minute').apply(
+    Mixed_Models_data = peak_hess_data['result'].groupby(group_by).apply(
         lambda x: pd.Series({
             'MM_Intercept': np.polyfit(x['hess'], x['peak'], 1)[1],
             'MM_Hess': np.polyfit(x['hess'], x['peak'], 1)[0]
         })
-    ).reset_index()
+    )
 
     peak_parameters_data = pd.merge(
     Mixed_Models_data,
     peak_curvature_parameters[[
-        'Minute',
         'average_peak_magnitude',
         'average_peak_curvature'
     ]],
-    on='Minute')
+    on=group_by)
     peak_parameters_data = pd.merge(peak_parameters_data,
-                                    peaks_perseccond_data[['Minute',
+                                    peaks_persecond_data[[group_by,
                                                            'persecond']],
-                                                           on='Minute')
-
+                                                           on=group_by)
     return peak_parameters_data
 
+def process_day_hour(d, h, hour):
+    peak_hess = obtain_peak_hess(hour, groupby="Minute")
+    parrams_data = collect_peak_parameters(peak_hess)
+    param_core = parrams_data.iloc[:, 1:7].copy()
+    param_core.columns = [f"param_{i}" for i in range(param_core.shape[1])]

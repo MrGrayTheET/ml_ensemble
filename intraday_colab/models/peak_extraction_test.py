@@ -4,7 +4,8 @@ from sklearn.linear_model import LinearRegression
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
-
+from intraday_colab import feature_engineering as fe
+from intraday_colab.feature_engineering import collect_peak_parameters, obtain_peak_hess
 import numba as nb  # For JIT compilation
 
 @nb.njit
@@ -82,10 +83,10 @@ def engineer_delta_feature(tick_data, price_col='price', delta_col='delta', time
 import pandas as pd
 import numpy as np
 from scipy.stats import linregress
-
+import datetime as dt
 
 def engineer_delta_features(df, minutes=15, price_col='close',
-                            timestamp_col='timestamp', volume_cols=('AskVolume', 'BidVolume')):
+                            timestamp_col='timestamp', volume_cols=('AskVolume', 'BidVolume'), volume_col = 'Volume', delta_pct=False):
     """
     Engineer delta-return features for specified time windows with proper DataFrame handling
 
@@ -109,8 +110,11 @@ def engineer_delta_features(df, minutes=15, price_col='close',
     bid_col = volume_cols[1]
 
     df['delta'] = df[ask_col] - df[bid_col]
-
-
+    if delta_pct:
+        df['delta_pct'] = df['delta']/df[volume_col]
+        delta_col = 'delta_pct'
+    else:
+        delta_col = 'delta'
     # Ensure proper datetime type
     df[timestamp_col] = pd.to_datetime(df[timestamp_col])
 
@@ -122,13 +126,13 @@ def engineer_delta_features(df, minutes=15, price_col='close',
     df['return'] = df.groupby('time_group')[price_col].pct_change()
 
     # Filter valid rows (need both delta and return)
-    valid = df[['delta', 'return']].notna().all(axis=1)
+    valid = df[[delta_col, 'return']].notna().all(axis=1)
 
     # Group and calculate regression features
     def calculate_slope_intercept(group):
         if len(group) < 2:
             return pd.Series({'intercept': np.nan, 'slope': np.nan})
-        slope, intercept, *_ = linregress(group['delta'], group['return'])
+        slope, intercept, *_ = linregress(group[delta_col], group['return'])
         return pd.Series({'intercept': intercept, 'slope': slope})
 
     features = (df[valid]
@@ -142,9 +146,9 @@ def engineer_delta_features(df, minutes=15, price_col='close',
              .agg(
         start_price=(price_col, 'first'),
         end_price=(price_col, 'last'),
-        mean_delta=('delta', 'mean'),
-        delta_std=('delta', 'std'),
-        n_ticks=('delta', 'count'),
+        mean_delta=(delta_col, 'mean'),
+        delta_std=(delta_col, 'std'),
+        n_ticks=(delta_col, 'count'),
         total_delta=('delta', 'sum')
     )
              .reset_index())
@@ -158,9 +162,9 @@ def engineer_delta_features(df, minutes=15, price_col='close',
     result['minutes'] = minutes
 
     # Clean up column order
-    cols = ['time_group', 'minutes', 'intercept', 'slope', 'abs_slope',
-            'start_price', 'end_price', 'total_return',
-            'mean_delta', 'delta_std', 'n_ticks']
+    cols = ['time_group', 'minutes', 'intercept', 'slope',  'total_return', 'total_delta', 'abs_slope',
+            'start_price', 'end_price',
+            'mean_delta', 'delta_std', 'n_ticks', ]
 
     return result[cols]
 
@@ -172,29 +176,22 @@ if __name__ == "__main__":
 
     loader.resample_logic.update({'BidVolume': 'sum', 'AskVolume': 'sum'})
 
-    f_contract = loader.load_intraday('NG_F')
-    f_contract_test = f_contract.loc['2021':'2023']
-    f_contract_test['timestamp'] = f_contract_test.index
-    f_contract_test['Delta'] = f_contract_test['BidVolume'] - f_contract_test['AskVolume']
+    data = loader.get_chart('NG_F')
+    training_data = data.loc['2021':'2022'].copy()
+    training_data['timestamp'] = training_data.index
+    training_data['hour'] = training_data.index.hour
+    training_data['minute'] = training_data.index.minute
+    training_data['Value'] = training_data['Close']
+    features_df = pd.DataFrame(
+        columns=['MM_Intercept', 'MM_Hess', 'average_peak_curvature', 'average_peak_magnitude', 'minute', 'persecond'],
+        index=pd.date_range(start=data.index.min(), end=data.index.max(), freq='1min'))
 
-    dforce_15 = engineer_delta_features(f_contract_test, 15, price_col='Close', volume_cols=('AskVolume', 'BidVolume'))
-    #
-    # ng_f_3 = f_contract_test.resample('1h').apply(loader.resample_logic)
-    # f_contract_test['ret'] = calculate_returns()
-    #
-    # ret = lambda df: np.log(df['Close'] / df['Close'].shift(1))
-    # delta = lambda df: df['AskVolume'] - df['BidVolume']
-    #
-    # ng_f_3['ret'] = ret(ng_f_3)
-    # ng_f_3['Delta'] = delta(ng_f_3)
-    # ng_f_3['CVD'] = ng_f_3['Delta'].cumsum()
-    #
-    # ng_f_3['Delta %'] = ng_f_3['Delta'] / ng_f_3['Volume']
-    #
-    # x = ng_f_3['Delta %'].ffill().dropna().values
-    #
-    # y = ng_f_3['ret'].bfill().ffill().values
-    #
+    pk_hess_res = []
 
+
+    for name, date in training_data.groupby(training_data.index.date):
+        for h_name, hour in date.groupby(date.hour):
+            hess_dict = obtain_peak_hess(date, groupby='minute')
+            features_df.loc[dt.datetime(name.year, name.month, name.day, h_name, hour.index.minute.min()): dt.datetime(name.year, name.month, name.day, h_name, hour.index.minute.max())] = collect_peak_parameters(hess_dict, group_by='minute')
 
 
