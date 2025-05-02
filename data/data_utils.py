@@ -114,10 +114,11 @@ class preprocess:
                 self.scaler = MinMaxScaler()
             else:
                 self.scaler = StandardScaler()
-                scaled_data = self.scaler.fit_transform(data)
-                self.data = pd.DataFrame(scaled_data, columns=data.columns, index = data.index)
+                
+            scaled_data = self.scaler.fit_transform(data)
+            self.data = pd.DataFrame(scaled_data, columns=data.columns, index = data.index)
         else:
-            self.data  = data
+            self.data = data
 
         self.tgt_col_idx = data.columns.tolist().index(target_col)
 
@@ -151,12 +152,20 @@ class preprocess:
 def train_autoformer(model, train_loader, epochs=10, lr=0.001):
     optimizer = optim.Adam(model.parameters(), lr=lr)
     criterion = nn.MSELoss()
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+        print(f"GPU is available: {torch.cuda.get_device_name(0)}")
+    else:
+        device = torch.device('cpu')
+        print("GPU not available, using CPU")
 
     for epoch in range(epochs):
         model.train()
         total_loss = 0
 
         for x_enc, x_mark_enc, x_dec, x_mark_dec, target in train_loader:
+            batch = [b.to(device) for b in batch]
+            x_enc, x_mark_enc, x_dec, x_mark_dec, y_true = batch
             optimizer.zero_grad()
             output = model(x_enc, x_mark_enc, x_dec, x_mark_dec)
             loss = criterion(output, target)
