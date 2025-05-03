@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
+from TSlib.models.Autoformer import Model as AF
 
 
 def create_time_features(index):
@@ -108,7 +109,7 @@ class Config:
 
 class preprocess:
 
-    def __init__(self, data:pd.DataFrame, scaler='minmax', scale_data= True, target_col='Close'):
+    def __init__(self, data:pd.DataFrame, config:classmethod, scaler='minmax', scale_data= True, target_col='Close', ):
         if scale_data:
             if scaler == 'minmax':
                 self.scaler = MinMaxScaler()
@@ -119,10 +120,13 @@ class preprocess:
             self.data = pd.DataFrame(scaled_data, columns=data.columns, index = data.index)
         else:
             self.data = data
+        if config != None:
+            self.config = config
 
         self.tgt_col_idx = data.columns.tolist().index(target_col)
 
     def autoformer_prep( self, seq_len, label_len, pred_len, batch_size=8):
+        self.model = AF
         x_enc, x_mark_enc, x_dec, x_mark_dec, y = create_windows(self.data,
                                                                  self.data.index,
                                                                  seq_len,
@@ -134,20 +138,8 @@ class preprocess:
 
         return self.loader
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    def autoformer_train(self, epochs=3, lr=0.001):
+        train_autoformer(self.model, self.loader, epochs, lr)
 
 def train_autoformer(model, train_loader, epochs=10, lr=0.001):
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -159,13 +151,17 @@ def train_autoformer(model, train_loader, epochs=10, lr=0.001):
         device = torch.device('cpu')
         print("GPU not available, using CPU")
 
+    criterion.to(device)
+    model.to(device)
+
     for epoch in range(epochs):
         model.train()
         total_loss = 0
 
         for x_enc, x_mark_enc, x_dec, x_mark_dec, target in train_loader:
+            batch = [x_enc, x_mark_enc, x_dec, x_mark_dec, target]
             batch = [b.to(device) for b in batch]
-            x_enc, x_mark_enc, x_dec, x_mark_dec, y_true = batch
+
             optimizer.zero_grad()
             output = model(x_enc, x_mark_enc, x_dec, x_mark_dec)
             loss = criterion(output, target)
