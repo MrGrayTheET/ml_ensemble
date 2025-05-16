@@ -113,10 +113,12 @@ def multivariate_regression(df: pd.DataFrame, X_cols: list, y_col: str, penalty=
         'rmse':root_mean_squared_error(test_y, test_preds),
         'data_std':y.std(),
         'rmse/sd': root_mean_squared_error(test_y, test_preds)/y.std(),
+        'train_end_idx': len(train_y),
         'r2': model.score(test_X, test_y),
         'model': model
 
     }
+
     print(res)
 
     return res

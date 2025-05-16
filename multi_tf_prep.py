@@ -1,36 +1,30 @@
 import yfinance as yf
 import datetime as dt
 import numpy as np
-import  os
+import os
 import pandas as pd
-import statsmodels.api as sm
-from matplotlib import pyplot as plt
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from ml_build.ml_model import ml_model
 from sc_loader import sierra_charts as sch
 from feature_engineering import (vsa,
-                                 vol_signal, normalize_hls,calc_daily_vol,calc_returns,
-                                 hawkes_process, atr, log_returns,kama,
+                                 vol_signal, normalize_hls, calc_daily_vol, calc_returns,
+                                 hawkes_process, atr, log_returns, kama,
                                  rvol, high_lows, cum_rvol, get_range, rsv)
 from ml_build.ml_model import ml_model as ml, xgb_params, gbr_params, rfr_params, xgb_clf_params
 
 from linear_models import multivariate_regression
-from scipy.stats import linregress
-from ml_build.utils import evaluate_model
 
-from model_prep import TrendModel as tmod
+if os.name == 'nt':
+    sc_cfg = 'data_config.toml'
+else:
+    sc_cfg = '/content/drive/MyDrive/utils/sc_config.toml'
 
-ticker = 'GC_F'
-
-sc = sch()
-df = sc.get_chart('ES_F')
-
-sc.resample_logic.update({'OHLCAvg': 'mean', 'HLCAvg': 'mean'})
+sc = sch(sc_cfg)
 
 
 class MultiTfTrend:
 
-    def __init__(self, data, timeframes=['5min', '10min', '1h', '4h', '1d'], train_test_ratio=0.8, project_dir="F:\\ML\\multi_tf\\"):
+    def __init__(self, data, timeframes=['5min', '10min', '1h', '4h', '1d'], train_test_ratio=0.8,
+                 project_dir="F:\\ML\\multi_tf\\"):
         self.features = None
         self.model = None
         if not os.path.isdir(project_dir): os.mkdir(project_dir)
@@ -43,10 +37,10 @@ class MultiTfTrend:
         self.train_ratio = train_test_ratio
         for i in timeframes:
             self.dfs_dict.update({i: data.resample(i).apply(sc.resample_logic).ffill().dropna()})
-            self.feats_dict.update({i: {'Volatility': [], 'Volume': [], 'Trend': [], 'Temporal': [], 'Additional':[]}})
+            self.feats_dict.update({i: {'Volatility': [], 'Volume': [], 'Trend': [], 'Temporal': [], 'Additional': []}})
 
             self.dfs_dict[i]['returns'] = log_returns(data.Close)
-        self.model_info = {'Dir':project_dir}
+        self.model_info = {'Dir': project_dir}
 
     def volatility_signals(self, timeframe, ATR=False, ATR_length=14, normalize_atr=True,
                            hawkes=False, hawkes_mean=168, kappa=0.1, hawkes_signal_lb=21, hawkes_binary_signal=True,
@@ -188,16 +182,17 @@ class MultiTfTrend:
                 features.append(f'momentum_{i}')
         if SMAs:
             for i in sma_lens:
-                data[f'SMA_{i}']  = data.Close.rolling(i).mean()
+                data[f'SMA_{i}'] = data.Close.rolling(i).mean()
                 if normalize_features:
-                    data[f'SMA_{i}_x'] = (data.Close - data[f'SMA_{i}'])/data.Close
+                    data[f'SMA_{i}_x'] = (data.Close - data[f'SMA_{i}']) / data.Close
                     features.append(f'SMA_{i}_x')
-                else:features.append(f'SMA_{i}')
+                else:
+                    features.append(f'SMA_{i}')
         if KAMAs:
             for i in kama_params:
                 kama_ma = kama(data.Close, *i)
                 if normalize_features:
-                    data[f'kama_{i[0]}_x'] = (data.Close - kama_ma)/data.Close
+                    data[f'kama_{i[0]}_x'] = (data.Close - kama_ma) / data.Close
                     features.append(f'kama_{i[0]}_x')
                 else:
                     data[f'kama_{i[0]}'] = kama_ma
@@ -206,12 +201,10 @@ class MultiTfTrend:
         self.dfs_dict[timeframe] = data
         self.feats_dict[timeframe]['Trend'] = features
 
-
-
         return
 
-    def HAR_model(self, scale_data=False, split_data=True, alpha=0.8, log=False,
-                  log_file='har_eval', regularize=False, L1_wt=1.0, cv=3):
+    def HAR_model(self, scale_data=False, split_data=True, training_size=0.8, alpha=0.8, log=False,
+                  log_file='har_eval', regularize=False, L1_wt=1.0, cv=3, keep_models_in_res=True):
 
         rvs = self.dfs_dict['1d'].filter(like='rv').dropna()
         if scale_data:
@@ -221,7 +214,9 @@ class MultiTfTrend:
         self.har_df = pd.DataFrame(
             columns=pd.MultiIndex.from_product([[col[:-3] for col in rvs.columns], ['rv_d', 'rv_w', 'rv_m', 'rv_t']]),
             index=rvs.index)
+
         evals = {}
+
         for col in rvs.columns:
             rv_d = rvs[col]
             column = col[:-3]
@@ -230,27 +225,34 @@ class MultiTfTrend:
                                                 'rv_w': rv_d.shift(1).rolling(5).mean(),
                                                 'rv_m': rv_d.shift(1).rolling(22).mean(),
                                                 'rv_t': rv_d}, index=rvs.index).dropna()
+            har_df = self.har_df.copy(deep=True)
 
-            df = self.har_df[column].ffill().dropna()
-            #split_ix = int(self.train_ratio * len(rvs))
-            #self.models_info.update({'test_idx': split_ix})
-            #train_x, test_x = df.iloc[:split_ix, :-1].to_numpy(), df.iloc[split_ix:, :-1].to_numpy()
-            #train_y, test_y = df.iloc[:split_ix, -1:].to_numpy(), df.iloc[split_ix:, -1:].to_numpy()
-            #regression = sm.OLS(train_y, train_x)
+            df = har_df.ffill().dropna()[column]
+            # split_ix = int(self.train_ratio * len(rvs))
+            # self.models_info.update({'test_idx': split_ix})
+            # train_x, test_x = df.iloc[:split_ix, :-1].to_numpy(), df.iloc[split_ix:, :-1].to_numpy()
+            # train_y, test_y = df.iloc[:split_ix, -1:].to_numpy(), df.iloc[split_ix:, -1:].to_numpy()
+            # regression = sm.OLS(train_y, train_x)
 
             if regularize:
-                regression = multivariate_regression(df, penalty='cv', cv=3)
-                model = regression.fit_regularized(alpha=alpha, L1_wt=L1_wt)
+                results = multivariate_regression(df, X_cols=['rv_d', 'rv_w', 'rv_m'], y_col='rv_t',
+                                                  penalty='cv', cv=cv, scaler=self.rv_scaler, train_split=split_data,
+                                                  train_size=training_size)
+
             else:
-                model = regression.fit(use_t=True)
+                results = multivariate_regression(df, X_cols=['rv_d', 'rv_w', 'rv_m'], y_col='rv_t',
+                                                  train_split=split_data, train_size=training_size,
+                                                  penalty=None)
 
-            test_preds = model.predict(test_x)
+            df['predictions'] = results['model'].predict(df.drop('rv_t', axis=1))
+            if not keep_models_in_res:
+                del results['model']
 
-            eval = evaluate_model(test_preds, test_y, features=self.har_df[column].columns, log=log, log_file=log_file,
-                                  sorted_features=False)
-            eval.update({'coefs': dict(zip(self.har_df[column].columns, model.params))})
-            self.har_df[column]['predictions'] = model.predict(self.har_df[column].drop('rv_t', axis=1))
-    def transfer_feature(self, from_tf, to_tf,feature_name):
+            evals.update({col:results})
+
+        return evals
+
+    def transfer_feature(self, from_tf, to_tf, feature_name):
         x = self.dfs_dict[from_tf][feature_name]
         y_df = self.dfs_dict[to_tf]
         y_df[feature_name] = x
@@ -258,14 +260,15 @@ class MultiTfTrend:
         return y_df
 
     def prepare_for_training(self, training_tf, target_horizon,
-                             vol_normalized_returns=True, normalize_lb=120, additional_tf=None, additional_features=[], train_size=0.8):
+                             vol_normalized_returns=True, normalize_lb=120, additional_tf=None, additional_features=[],
+                             train_size=0.8):
 
         self.training_df = self.dfs_dict[training_tf]
         features = []
 
         if vol_normalized_returns:
             vol = calc_daily_vol(self.training_df.returns)
-            self.training_df['target_returns'] = calc_returns(self.training_df.Close, target_horizon)/vol
+            self.training_df['target_returns'] = calc_returns(self.training_df.Close, target_horizon) / vol
         if additional_tf is not None:
             feat_tf = self.dfs_dict[additional_tf]
 
@@ -276,28 +279,28 @@ class MultiTfTrend:
             features.append(f'{additional_tf}_{i}')
 
         self.feats_dict[training_tf]['Additional'] = features
-        self.features = sum(self.feats_dict[training_tf].values(),[])
+        self.features = sum(self.feats_dict[training_tf].values(), [])
 
         self.training_df = self.training_df.ffill().dropna()
         self.ml = ml(self.training_df, self.features, 'target_returns', train_test_size=train_size)
 
         return
 
-
-
-    def time_based_target(self,target_tf, training_start, training_end,
-                    target_start, target_end, feature_types = [], target_type='Vol', x_feature_classes=4):
-        features = sum([self.feats_dict[target_tf][i] for i in feature_types],[])
+    def time_based_target(self, target_tf, training_start, training_end,
+                          target_start, target_end, feature_types=[], target_type='Vol', x_feature_classes=4):
+        features = sum([self.feats_dict[target_tf][i] for i in feature_types], [])
         data = self.dfs_dict[target_tf].drop_duplicates()
 
         fh_data = data.loc[training_start:training_end].dropna()
 
         bh_data = data.loc[target_start:target_end].dropna()
-        target_returns = bh_data.groupby(bh_data.index.date).apply(lambda x:pd.DataFrame({'close_returns': np.log(x.Close[0]) - np.log(x.Close[-1]),
-                                                                              'vol':np.sqrt(np.sum(x.returns**2)),
-                                                                              'range': (np.max(x.High) - np.min(x.Low))/x.Close[0]}, index=[x.index.date]))
+        target_returns = bh_data.groupby(bh_data.index.date).apply(
+            lambda x: pd.DataFrame({'close_returns': np.log(x.Close[0]) - np.log(x.Close[-1]),
+                                    'vol': np.sqrt(np.sum(x.returns ** 2)),
+                                    'range': (np.max(x.High) - np.min(x.Low)) / x.Close[0]}, index=[x.index.date]))
 
-    def train_model(self, method='xgbclf', params=None, high_percentile=85, low_percentile=20, save_file='save_eval.csv',plot=True):
+    def train_model(self, method='xgbclf', params=None, high_percentile=85, low_percentile=20,
+                    save_file='save_eval.csv', plot=True):
         if method == 'xgb':
             self.model = self.ml.xgb_model(xgb_params, evaluate=True, eval_log=self.model_info['Dir'] + save_file,
                                            plot_pred=plot)
@@ -311,16 +314,3 @@ class MultiTfTrend:
         self.model_info['ML'].update({'Type': method, 'Hyperparams': params, 'Features': self.features})
 
         self.model_info.update({'Features': self.features})
-
-
-
-
-
-mtf_df = MultiTfTrend(df)
-
-
-
-
-
-
-
