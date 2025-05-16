@@ -21,7 +21,7 @@ else:
 sc = sch(sc_cfg)
 
 
-class MultiTfTrend:
+class MultiTfModel:
 
     def __init__(self, data, timeframes=['5min', '10min', '1h', '4h', '1d'], train_test_ratio=0.8,
                  project_dir="F:\\ML\\multi_tf\\"):
@@ -86,7 +86,7 @@ class MultiTfTrend:
                 self.dfs_dict['1d'][[f'{timeframe}_rsv_neg', f'{timeframe}_rsv_pos']] = data[['rsv_neg', 'rsv_pos']]
 
             else:
-                data['rv'] = data.returns.groupby(data.index.date).apply(lambda x: np.sum(x ** 2))
+                data['rv'] = data.returns.groupby(data.index.date).apply(lambda x: np.sqrt(np.sum(x ** 2)))
                 self.dfs_dict['1d'][f'{timeframe}_rv'] = data['rv']
 
             data.rv = data.rv.ffill().dropna()
@@ -121,6 +121,7 @@ class MultiTfTrend:
         if VSA:
             data['VSA'] = vsa(data, vsa_col, vsa_lb)
             features.append('VSA')
+
         if normalize_vol:
             median = data.Volume.rolling(normalizer_len).median()
             data['norm_vol'] = data.Volume / median
@@ -203,32 +204,36 @@ class MultiTfTrend:
 
         return
 
-    def HAR_model(self, scale_data=False, split_data=True, training_size=0.8, alpha=0.8, log=False,
-                  log_file='har_eval', regularize=False, L1_wt=1.0, cv=3, keep_models_in_res=True):
+    def train_HAR(self, scale_data=False, split_data=True, training_size=0.8,
+                  regularize=False, cv=3, save_best_only=True, target_horizon=1, add_feature=True):
 
         rvs = self.dfs_dict['1d'].filter(like='rv').dropna()
 
         if scale_data:
             self.rv_scaler = StandardScaler()
-            rvs = pd.DataFrame(self.rv_scaler.fit_transform(rvs), columns=rvs.columns)
+            rvs = pd.DataFrame(self.rv_scaler.fit_transform(rvs), columns=rvs.columns, index=rvs.index)
 
         self.har_df = pd.DataFrame(
             columns=pd.MultiIndex.from_product([[col[:-3] for col in rvs.columns], ['rv_d', 'rv_w', 'rv_m', 'rv_t']]),
             index=rvs.index)
 
         evals = {}
+        rmse = []
+        best_rmse = 1.5
 
         for col in rvs.columns:
             rv_d = rvs[col]
             column = col[:-3]
 
-            self.har_df[column] = pd.DataFrame({'rv_d': rv_d.shift(1),
-                                                'rv_w': rv_d.shift(1).rolling(5).mean(),
-                                                'rv_m': rv_d.shift(1).rolling(22).mean(),
-                                                'rv_t': rv_d}, index=rvs.index).dropna()
+            self.har_df[column] = pd.DataFrame({'rv_d': rv_d.shift(0),
+                                                'rv_w': rv_d.shift(0).rolling(5).mean(),
+                                                'rv_m': rv_d.shift(0).rolling(22).mean(),
+                                                'rv_t': rv_d.shift(-target_horizon)}, index=rvs.index).dropna()
             har_df = self.har_df[column].copy(deep=True)
 
             df = har_df.ffill().dropna()
+            pred_idx = df.index
+
             # split_ix = int(self.train_ratio * len(rvs))
             # self.models_info.update({'test_idx': split_ix})
             # train_x, test_x = df.iloc[:split_ix, :-1].to_numpy(), df.iloc[split_ix:, :-1].to_numpy()
@@ -246,11 +251,32 @@ class MultiTfTrend:
                                                   penalty=None)
 
             df['predictions'] = results['model'].predict(df.drop('rv_t', axis=1))
+            df
 
-            if not keep_models_in_res:
-                del results['model']
+
+            if save_best_only:
+                rmse = results['rmse']
+                tf = column
+                if rmse < best_rmse:
+                    best_rmse = rmse
+                    best_score = tf
+                else:
+                    del results['model']
+            else:
+                self.har_df[(column, 'predictions')] = np.nan
+                self.har_df.loc[pred_idx, (column, 'predictions')] = df['predictions']
 
             evals.update({col:results})
+        if save_best_only:
+            self.har_df[(best_rmse, 'predictions')] = np.nan
+            self.har_df.loc[pred_idx, (best_score, 'predictions')] = df['predictions']
+
+            if add_feature:
+                self.dfs_dict['1d'].loc[pred_idx]['HAR_preds'] = df['predictions']
+                self.feats_dict['1d']['Additional'].append('HAR_preds')
+
+
+
 
         return evals
 
@@ -269,7 +295,7 @@ class MultiTfTrend:
         features = []
 
         if vol_normalized_returns:
-            vol = calc_daily_vol(self.training_df.returns)
+            vol = calc_daily_vol(self.training_df.Close)
             self.training_df['target_returns'] = calc_returns(self.training_df.Close, target_horizon) / vol
         if additional_tf is not None:
             feat_tf = self.dfs_dict[additional_tf]
@@ -280,7 +306,7 @@ class MultiTfTrend:
 
             features.append(f'{additional_tf}_{i}')
 
-        self.feats_dict[training_tf]['Additional'] = features
+        self.feats_dict[training_tf]['Additional'] += features
         self.features = sum(self.feats_dict[training_tf].values(), [])
 
         self.training_df = self.training_df.ffill().dropna()
@@ -316,3 +342,4 @@ class MultiTfTrend:
         self.model_info['ML'].update({'Type': method, 'Hyperparams': params, 'Features': self.features})
 
         self.model_info.update({'Features': self.features})
+
