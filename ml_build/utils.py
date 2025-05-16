@@ -8,9 +8,10 @@ import pickle
 import os
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.metrics import (mean_absolute_percentage_error,
-                             mean_squared_error,
+                             mean_squared_error,root_mean_squared_error,
                              r2_score,
                              accuracy_score,
+                             classification_report,
                              log_loss)
 
 
@@ -113,21 +114,20 @@ def plot_predictions(train_predict, test_predict, y_train, y_test, y_scaler):
     plt.show()
 
 
-def evaluate_model(test_predict, y_test, features, log_file='rfr_log.csv', sorted_features=False, ):
+def evaluate_model(test_predict, y_test, features,log=False, log_file='rfr_log.csv', sorted_features=False, ):
 
     pred_std_dev = np.std(y_test)
 
     evaluation_results = {
-            'eval_datetime': [pd.Timestamp.today()],
-            'r2_score': [r2_score(y_test, test_predict)],
-            'mse': [mean_squared_error(y_test, test_predict)],
-            'rmse': [mean_squared_error(y_test, test_predict,squared=False)],
-            'rmse/sd': [mean_squared_error(y_test, test_predict, squared=False) / pred_std_dev],
-            'mape': [mean_absolute_percentage_error(y_test, test_predict) / 1000000],
+            'eval_date': dt.datetime.today().strftime('%Y-%m-%d'),
+            'r2': r2_score(y_test, test_predict),
+            'mse': mean_squared_error(y_test, test_predict),
+            'rmse': root_mean_squared_error(y_test, test_predict),
+            'rmse/sd': root_mean_squared_error(y_test, test_predict) / pred_std_dev,
+            'mape': mean_absolute_percentage_error(y_test, test_predict) / 1000,
             'sorted_features': sorted_features,
-            'features': [features]
                                     }
-    log_data(evaluation_results, log_file)
+    if log:log_data(evaluation_results, log_file)
 
     print(evaluation_results)
 
@@ -224,16 +224,26 @@ def log_data(evaluation_results, log_file):
 def evaluate_clf(test_predictions,test_probs, y_test, sorted_features ,log_file='clf_log.csv'):
 
     evaluation_res = {
-        'eval_datetime': [pd.Timestamp.today()],
-        'accuracy_score':[accuracy_score(y_test, y_pred=test_predictions)],
-        'log_loss':[log_loss(y_test, test_probs, labels=[0,1,2])]
+        'eval_datetime': pd.Timestamp.today(),
+        'accuracy_score':accuracy_score(y_test, y_pred=test_predictions),
+        'log_loss':log_loss(y_test, test_probs, labels=[0,1,2])
+
 
     }
+    print(classification_report(y_true=y_test, y_pred=test_predictions))
     log_data(evaluation_res, log_file)
 
     return evaluation_res
 
-
+def prune_non_builtin(d):
+    if isinstance(d, dict):
+        return {
+            k: prune_non_builtin(v)
+            for k, v in d.items()
+            if isinstance(v, (dict, str, int, float)) or
+               (isinstance(v, list) and all(isinstance(i, (str, int, float)) for i in v))
+        }
+    return d  # Base case: return the value itself if needed
 
 class sierra_charts:
 

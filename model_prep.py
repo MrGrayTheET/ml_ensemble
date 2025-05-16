@@ -1,6 +1,8 @@
+from numpy import ndarray
+
 from ml_build import torch_dl_2 as tdl
 from ml_build.ml_model import ml_model as ml, xgb_params, gbr_params, rfr_params, xgb_clf_params
-from ml_build.utils import clean_data
+from ml_build.utils import clean_data, prune_non_builtin
 from statsmodels.tsa.seasonal import STL, MSTL, seasonal_decompose
 from tests import evaluate_seasonal as es
 import matplotlib.pyplot as plt
@@ -8,22 +10,30 @@ from feature_engineering import (atr,
                                  tr,
                                  rvol,
                                  get_trading_days,
+                                 kama,
                                  vol_scaled_returns,
+                                 high_lows,
                                  calc_returns,
                                  calc_daily_vol,
                                  fft_decomp,
                                  stack_groups_vertically,
-                                 ts_train_test_split
+                                 ts_train_test_split,
+                                 plot_two_axes,
+                                 hawkes_process,
+                                 vol_signal,
+                                 macd
                                  )
 from sklearn.model_selection import train_test_split, TimeSeriesSplit
+from linear_models import multivariate_regression
 import ast
 import yfinance as yf
 import pandas as pd
 import numpy as np
 import torch.nn as nn
 import torch
+import datetime as dt
 import os
-
+from copy import deepcopy
 VOL_THRESHOLD = 5
 
 
@@ -31,10 +41,13 @@ class TrendModel:
 
     def __init__(self, data, project_dir='F:\\ML\\', vol_scale=True):
 
+        self.y_data = None
+        self.x_data = None
+        self._features = None
         self.ml = None
         self.model = None
         self.decomp_model = None
-        self.data = data
+        self.data = data.copy(deep=True)
         self.multi_features = []
         self._target = None
         self.mdex = (type(self.data.columns) == pd.MultiIndex)
@@ -51,7 +64,8 @@ class TrendModel:
             'Scaling': {'Vol': True},
             'ML': {'Training_End': 0}
         }
-        self.defaults = {'xgb': xgb_params, 'gbr': gbr_params, 'rfr': rfr_params, 'xgbclf': xgb_clf_params}
+        self.defaults = {'xgb': xgb_params, 'gbr': gbr_params, 'rfr': rfr_params, 'xgbclf': xgb_clf_params,
+                         'linear': None, 'linear_l2': None, 'linear_l1': None}
 
         if self.mdex:
             self.cols = lambda col: [(col, ticker) for ticker in self.data['Close'].columns]
@@ -156,8 +170,114 @@ class TrendModel:
         normalized = self.data[column] / self.data.Close
         return normalized
 
-    def trend_features(self, trend=True, trend_window=1, SMAs=False, sma_lens=None, momentum=False,
-                       momentum_lens=None, BBands=False, bband_window=20, bband_width=2, normalize_features=True):
+    def volume_features(self, volume_ma=True, volume_ma_len=10, sub_ma=True, standardize_volume=True, RVOL=False,
+                        RVOL_len=10, cum_rvol=False, cum_rvol_groupby='month'):
+        features = []
+        if volume_ma:
+            self.data[f'volume_{volume_ma_len}'] = self.data.Volume.rolling(volume_ma_len).mean()
+            features += [f'volume_{volume_ma_len}']
+
+            if sub_ma:
+                self.data['volume_ma'] = self.data.Volume - self.data[f'volume_{volume_ma_len}']
+                features += ['volume_ma']
+
+        if standardize_volume:
+            self.data['std_volume'] = self.data.Volume / self.data.Volume.rolling(60).std()
+            features += ['std_volume']
+
+        self.model_info['Volume'].update({'Features': features})
+
+        return self.data[features]
+
+        return
+    def volatility_indicators(self, ATR=False, atr_len=7, TR=False, tr_atr=False, tr_atr_len=12, tr_atr_mean=1,
+                              hawkes_vol=False, log_range=False, hawkes_atr_len=20, kappa=0.1, hawkes_binary=False,
+                              signal_lb=21, normalize=True, rolling_range=False,
+                              rr_hawkes_period='1w', rolling_range_widths=[5, 20], normalize_range=False,
+                              normalize_mean_len=61, rr_hawkes=False,rr_mean=52, rr_hawkes_kappa=0.1, rr_signal_lb=21):
+        features = []
+
+        if ATR:
+            self.data['ATR'] = atr(self.data, length=atr_len, normalized=normalize)
+            features += ['ATR']
+        if TR:
+            self.data['TR'] = tr(self.data, normalized=normalize)
+            features += ['TR']
+        if tr_atr:
+            self.data['tr_ratio'] = (tr(self.data, normalized=False) / atr(self.data, length=tr_atr_len,
+                                                                           normalized=False)).rolling(tr_atr_mean).mean()
+            features += ['tr_ratio']
+
+        if hawkes_vol:
+            candle_range = (self.data.High - self.data.Low)
+            norm_atr = atr(self.data, length=hawkes_atr_len, normalized=False)
+            norm_range = candle_range / norm_atr
+            if log_range:
+                norm_range = np.log(norm_range)
+            h_vol = hawkes_process(norm_range, kappa)
+
+            if hawkes_binary:
+                self.data['hawkes_signal'] = vol_signal(self.data.Close, h_vol, signal_lb)
+            else:
+                self.data['hawkes_signal'] = h_vol
+
+            features.append('hawkes_signal')
+
+
+        if rolling_range:
+            for i in rolling_range_widths:
+                hi = self.data.High.rolling(i).max()
+                lo = self.data.Low.rolling(i).min()
+                range_ = (hi-lo)
+                if normalize_range:
+                    mean = range_.rolling(normalize_mean_len).mean()
+                    self.data[f'norm_range_{i}x'] = range_/mean
+                    features.append(f'norm_range_{i}x')
+                else:
+                    self.data[f'range_{i}x'] = range_/self.data.Close
+                    features.append(f'range_{i}x')
+        if rr_hawkes:
+            weekly_data = self.data.resample(rr_hawkes_period).ohlc()
+            weekly_ohlc = pd.DataFrame()
+            weekly_ohlc[['Open','High','Low','Close']] = weekly_data[[('Open','open'), ('High', 'high'), ('Low', 'low'), ('Close', 'close')]]
+            weekly_atr = atr(weekly_ohlc, length=rr_mean)
+            rs_norm_ranges = (weekly_ohlc.High - weekly_ohlc.Low)/weekly_atr
+            weekly_ohlc['rs_norm_range'] = rs_norm_ranges
+            wh = hawkes_process(rs_norm_ranges, rr_hawkes_kappa)
+
+            self.data['wh_signal'] = np.zeros(len(self.data))
+
+            if wh.index[-1] not in self.data.index: wh.index = wh.index + dt.timedelta(days=1)
+
+
+            if hawkes_binary:
+                wh_signal = pd.Series(vol_signal(weekly_ohlc.Close, wh, rr_signal_lb),
+                                      index = wh.index)
+
+                weekly_ohlc['wh_signal'] = wh_signal
+
+                self.data.wh_signal = wh_signal
+
+            else:
+                self.data['wh_signal'] = wh
+
+            self.data.wh_signal = self.data.wh_signal.ffill()
+
+            features.append('wh_signal')
+
+        self.model_info['Volatility'].update({'Features': features})
+
+        return self.data[features]
+
+    def trend_features(self,
+                       trend=False, trend_window=1,
+                       MACD=False, MACD_params=(12, 26), MACD_cols=['MACD', 'Signal'],
+                       KAMA=False, kama_params=[(5, 2, 32)],
+                       SMAs=False, sma_lens=None,
+                       momentum=False, momentum_lens=None,
+                       hls=False, hl_lens=[5, 10, 20],
+                       BBands=False, bband_window=20, bband_width=2,
+                       normalize_features=True):
 
         if sma_lens is None:
             sma_lens = [20, 50, 100]
@@ -166,6 +286,16 @@ class TrendModel:
             momentum_lens = [21, 42, 63]
 
         features = []
+
+        if KAMA:
+            for i in kama_params:
+                kama_ma = kama(self.data.Close, *i)
+                if normalize_features:
+                    self.data[f'KAMA_{i[0]}x'] = (self.data.Close - kama_ma) / self.data.Close
+                    features.append(f'KAMA_{i[0]}x')
+                else:
+                    self.data[f'KAMA_{i[0]}'] = kama_ma
+                    features.append(f'KAMA_{i[0]}')
 
         if trend:
             self.data['trend'] = self.decomp_model.trend.values
@@ -177,6 +307,12 @@ class TrendModel:
                 features = features + ['trend_roc', 'trend_x_close']
             else:
                 features = features + ['trend', 'trend_roc']
+
+        if MACD:
+            self.data[MACD_cols] = macd(self.data, short_term=MACD_params[0], long_term=MACD_params[1],
+                                        ret_cols=MACD_cols)
+
+            for i in MACD_cols: features.append(i)
 
         if SMAs:
             for i in sma_lens:
@@ -205,38 +341,31 @@ class TrendModel:
                 for i in ['bb_ma', 'bb_upper', 'bb_lower']:
                     self.data[i + '_x'] = self.normalize_ma(i)
                     features.append(i + '_x')
-
             else:
                 features = features + ['bb_ma', 'bb_upper', 'bb_lower']
+
+        if hls:
+            df = high_lows(self.data, hl_lens, normalize_features)
+            df.columns = df.columns.str.replace('_norm', '_x')
+            self.data[df.columns] = df
+
+            features += df.columns.to_list()
 
         self.model_info['Trend'].update({'Features': features})
 
         return self.model_info['ML']
 
-    def seasonal_features(self, seasonals=True, residuals=True, normalize_features=False):
+    def feature_eval(self, target_period, feat_types=['Trend'], cv=10):
 
-        features = []
+        self.features = feat_types
+        self.target = target_period
 
-        if seasonals:
-            for i in range(len(self.decomp_model.seasonal.columns)):
-                self.data[f'seasonal_{i}'] = self.decomp_model.seasonal.iloc[:, i].values
+        reg = multivariate_regression(self.data, self.features, self._target, penalty='l1', alpha=cv)
+        feat_df = pd.DataFrame(reg['coefs'], index=self.features, columns=['coefs'])
 
-                if normalize_features:
-                    self.data[f'seasonal_{i}'] = self.normalize_indicator(f'seasonal_{i}')
+        returned_features = feat_df[feat_df['coefs'] != 0].to_dict()
 
-                features.append(f'seasonal_{i}')
-
-        if residuals:
-            self.data['resid'] = self.decomp_model.resid
-
-            if normalize_features:
-                self.data['resid'] = self.normalize_indicator('resid')
-
-            features.append('resid')
-
-        self.model_info['Seasonal'].update({'Features': features})
-
-        return self.data[features]
+        return returned_features
 
     def normalized_returns(self, offset):
         return (
@@ -244,28 +373,94 @@ class TrendModel:
                 / np.sqrt(offset)
         )
 
-    def train_model(self, target_period=10, feat_types=['Volume', 'Seasonal', 'Trend', 'Volatility'], method='xgb',
+    def train_model(self, target_period=10, feat_types=['Trend'], lasso_selection=False, lasso_cv=5, method='xgb',
                     params=None, train_test_size=0.8,
-                    save_file='model_eval.csv', plot=True, high_percentile=65, low_percentile=30, save_model=False):
+                    save_file='model_eval.csv', plot=True, high_percentile=65, low_percentile=30, linear_alpha=0.8,
+                    save_model=False):
 
         self.target = target_period
 
         self.features = feat_types
+        if lasso_selection:
+            self._features = [*self.feature_eval(8, feat_types=['Trend'], cv=lasso_cv)['coefs'].keys()]
 
         if params is None: params = self.defaults[method]
 
-        data = self.data[self._features + [self.target]].dropna()
+        data = self.data[self._features + [self.target]].copy(deep=True).ffill().dropna()
         self.ml = ml(data, self.features, self.target, train_test_size=train_test_size)
 
         self.model_info['ML'].update({'Train Length': len(self.ml.y_train),
                                       'Test_length': len(self.ml.y_test)})
 
-        model = self.train(high_percentile, low_percentile, method, params, plot, save_file)
+        if 'linear' not in method:
+            self.model = self.train(high_percentile, low_percentile, method, params, plot, save_file)
+        else:
+            if 'l2' in method:
+                res = multivariate_regression(data, self.features, self.target,
+                                              penalty='l2',
+                                              alpha=linear_alpha,
+                                              train_split=True,
+                                              train_size=train_test_size
+                                              )
+            elif 'cv' in method:
+                res = multivariate_regression(data, self.features, self.target,
+                                              penalty='cv',
+                                              alpha=linear_alpha,
+                                              train_size=train_test_size,
+                                              train_split=True)
+            elif 'l1' in method:
+                #TBD Add scaler?
+                res = multivariate_regression(data, self.features, self.target,
+                                              penalty='l1',
+                                              alpha=linear_alpha,
+                                              train_split=True,
+                                              train_size=train_test_size)
+            else:
+                res = multivariate_regression(data, self.features, self.target,
+                                              train_split=True,
+                                              train_size=train_test_size)
+
+            res['coefs'] = dict(zip(self.features, res['coefs']))
+
+            self.model = deepcopy(res['model'])
+            res
+
+            self.model_info['ML'].update(res)
 
         print('Model successfully trained!')
-        print(self.model_info)
         self.data['predictions'] = self.model.predict(self.data[self._features])
 
+        return self.model
+
+    def plot_predictions(self, prediction_col='predictions'):
+
+        true_values = self.ml.y_test.values
+        predictions = self.data.predictions.iloc[-self.model_info['ML']['Test_length']:]
+        rmse = self.model_info['rmse']
+        r2 = self.model_info['r2']
+
+        # Plot
+        plt.figure(figsize=(6, 6))
+        plt.scatter(true_values, predictions, alpha=0.6)
+        plt.plot([min(true_values), max(true_values)], [min(true_values), max(true_values)], 'r--',
+                 label='Perfect Prediction')
+
+        # Labels and styling
+        plt.xlabel('True Values')
+        plt.ylabel('Predicted Values')
+        plt.title('Prediction vs True Value')
+
+        # Add metrics as text
+        plt.text(0.05, 0.95, f'RMSE = {rmse:.2f}\n$R^2$ = {r2:.2f}',
+                 transform=plt.gca().transAxes, fontsize=12,
+                 verticalalignment='top', bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
+
+        plt.legend()
+        plt.grid(True)
+        plt.axis('equal')
+        plt.tight_layout()
+
+        return None
 
     def train(self, high_percentile, low_percentile, method, params, plot, save_file):
         if method == 'xgb':
@@ -278,28 +473,41 @@ class TrendModel:
         if method == 'xgbclf':
             self.model = self.ml.xgb_clf(high_p=high_percentile, low_p=low_percentile, parameter_dict=params)
 
-        self.model_info['ML'].update({'Type': method, 'Hyperparams': params})
+        self.model_info['ML'].update({'Type': method, 'Hyperparams': params, 'Features':self._features,})
+
+        self.model_info.update({'Features': self._features})
 
         print(self.model_info)
         return self.model
 
     def save_model(self, model_name):
         model_dir = self.model_info['Dir'] + model_name + '\\'
+
         print('Saving to ' + model_dir)
 
         if not os.path.isdir(model_dir):
             os.mkdir(model_dir)
 
-        self.ml.save_model(file_name=model_name + '_model', save_fp=model_dir)
+        if self.ml.model != None:
+            self.ml.save_model(file_name=model_name + '_model', save_fp=model_dir)
+        elif self.model != None:
+            self.ml.model = self.model
+            self.ml.save_model(file_name=model_name + '_model', save_fp=model_dir)
+        else:
+            print('No Model Found')
+            return False
+
         print('Model Saved to ' + model_dir)
 
+        model_params = prune_non_builtin(self.model_info)
+
         with open(model_dir + 'model_params', 'w') as f:
-            f.write(str(self.model_info))
+            f.write(str(model_params))
 
         training_data = self.data.to_csv(model_dir + 'training_data.csv')
 
         print('Model Data and parameters saved to ' + model_dir)
-        return
+        return True
 
     def load_model(self, model_name, dt_index=False, feature_types=['Trend']):
         model_dir = self.model_info['Dir'] + model_name + '\\'
@@ -312,7 +520,11 @@ class TrendModel:
 
         with open(model_dir + 'model_params', 'r') as f:
             str_data = f.read()
-        model_info = ast.literal_eval(str_data)
+            import re
+            s_clean = re.sub(r"'eval_datetime': Timestamp\([^)]+\),? ?", "", str_data)
+            s_clean = re.sub(r"'model': Ridge\([^)]*\),?\s*", "", s_clean)
+
+        model_info = ast.literal_eval(s_clean)
 
         training_data = pd.read_csv(model_dir + 'training_data.csv', index_col=[0])
         if dt_index:
@@ -322,7 +534,20 @@ class TrendModel:
 
         self.data = training_data
         self.model_info = model_info
-        self.features = feature_types
+        try:
+            self._features = model_info['Features']
+
+        except:
+
+            try:self.model.feature_names_in_.tolist()
+
+            except: self.features = feature_types
+
+
+            else: self._features = self.model.feature_names_in_.tolist()
+        else:
+            self._features = model_info['Features']
+
         self.x_data = self.data[self._features]
         self.y_data = self.data['target_returns']
 
@@ -341,7 +566,7 @@ class TrendModel:
                 return
 
 
-class multi_asset_trend(TrendModel):
+class MultiAssetTrend(TrendModel):
 
     def __init__(self, tickers=None, data=None, project_dir='F:\\ML\\', download_start='2000-01-01',
                  download_end='2025-04-02'):
@@ -432,7 +657,7 @@ class multi_asset_trend(TrendModel):
         x_train, y_train = train[self.multi_features], train[self._target]
         x_test, y_test = test[self.multi_features], test[self._target]
         self.ml = ml(self.training_df, self.multi_features, self._target)
-        print(f'X Shape:{ x_train.shape }')
+        print(f'X Shape:{x_train.shape}')
         self.ml.x_train, self.ml.y_train = x_train, y_train
         self.ml.x_test, self.ml.y_test = x_test, y_test
 

@@ -2,7 +2,6 @@
 import pandas as pd
 import numpy as np
 
-
 def laguerre_filter(prices, alpha=0.8):
     n = prices.size
     L0, L1, L2, L3, f = [pd.Series(0, index=prices.index)] * 5

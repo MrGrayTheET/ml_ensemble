@@ -20,8 +20,10 @@ gbr_params = {'max_features': [5,6,7],
 
 xgb_params = {
     'learning_rate': [0.01, 0.1, 0.2],
-    'max_depth': [3, 5, 7],
-    'subsample': [0.8, 0.9, 1.0]
+    'max_depth': [3, 5, 7, 9],
+    'subsample': [0.8, 0.9, 1.0],
+    'n_estimators':[200],
+    'max_leaves': [5, 7, 8]
 
 }
 
@@ -118,7 +120,7 @@ class ml_model:
             params = pd.DataFrame(data=self.params[name], index=[pd.Timestamp.today()]).to_csv(params_file)
 
         if evaluate:
-            evaluate_model(self.test_predict, self.y_test, self.feats,sorted_features=True, log_file=eval_log)
+            self.eval = evaluate_model(self.test_predict, self.y_test, self.feats,sorted_features=True, log_file=eval_log)
 
         return self.model
 
@@ -164,7 +166,8 @@ class ml_model:
 
         if evaluate:
 
-            evaluate_model(self.test_predict, self.y_test, self.feats, eval_log)
+            self.eval = evaluate_model(self.test_predict, self.y_test, self.feats, eval_log)
+
 
         if plot_pred:
             self.plot_predictions(test_pred=True, training_pred=True)
@@ -198,7 +201,7 @@ class ml_model:
             self.plot_importances(self.model, subplots=True)
 
         if evaluate:
-            eval = evaluate_model(self.test_predict, self.y_test,self.feats, log_file=eval_log, sorted_features=True)
+            self.eval = evaluate_model(self.test_predict, self.y_test,self.feats, log_file=eval_log, sorted_features=True)
             print(eval)
         else:
             pass
@@ -240,6 +243,7 @@ class ml_model:
             if evaluate:
                 model_eval = evaluate_clf(self.test_predict, self.test_probs, self.clf_test,  self.feats)
                 print(model_eval)
+                self.eval = model_eval
 
         return self.model
 

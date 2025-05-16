@@ -4,7 +4,7 @@ import torch
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from ml_builder.utils import clean_data
+from ml_build.utils import clean_data
 import os
 
 from torch.utils.data import DataLoader, TensorDataset
@@ -138,16 +138,6 @@ class LSTMModel(nn.Module):
 
                 print(f"Model weights saved to {path}")
 
-class SharpeLoss(nn.Module):
-    def __init__(self):
-
-        return
-
-    def forward(self, predictions, targets):
-        mean_return = torch.mean(predictions)
-        var_return = torch.var(predictions, unbiased=False)
-        sharpe_ratio = mean_return / (torch.sqrt(var_return) + 1e-8)
-        return loss
 
 def training_loop(X_train,y_train,X_test,y_test, n_epochs, lstm, optimizer, loss_func):
     lstm.train()

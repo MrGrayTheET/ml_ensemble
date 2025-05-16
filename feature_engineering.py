@@ -3,11 +3,24 @@ import numpy as np
 import yfinance as yf
 from datetime import date, timedelta
 from matplotlib import pyplot as plt
+from pandas import DataFrame
 from scipy.signal import find_peaks
+from scipy.stats import linregress
 from filters import wwma
+import datetime as dt
+
 
 VOL_LOOKBACK = 60
 VOL_TARGET = 0.15
+
+range_t = lambda x: (x.High.max(), x.Low.min())
+
+
+def convert_to_time(time_strings):
+    return [dt.datetime.strptime(t, "%H:%M").time() for t in time_strings]
+
+def log_returns(data: pd.Series, lb=1):
+    return np.log(data) -  np.log(data.shift(lb))
 
 
 def ts_train_test_split(df, test_size=0.2, groups=None):
@@ -84,6 +97,7 @@ def ts_train_test_split(df, test_size=0.2, groups=None):
 
     return train_df, test_df
 
+
 def reshape_multiindex(df, group_id_column='Ticker', group_name_column='Tickers'):
     """
     Reshape a DataFrame with MultiIndex columns so that:
@@ -140,6 +154,12 @@ def reshape_multiindex(df, group_id_column='Ticker', group_name_column='Tickers'
 import pandas as pd
 import numpy as np
 
+def normalize_hls(close, highs, lows, normalize_lb=120):
+    df = pd.DataFrame({'width':(highs-lows)/(highs-lows).rolling(normalize_lb),
+                       'high': (highs - close)/close,
+                       'low': (close-lows)/close})
+    return df
+
 
 def stack_groups_vertically(df, group_id_column='Group_ID', group_name_column='Group'):
     """
@@ -195,6 +215,15 @@ def stack_groups_vertically(df, group_id_column='Group_ID', group_name_column='G
     return result_df
 
 
+def macd(data, short_term=12, long_term=26, normalize=True, close_col='Close', ret_cols=['MACD', 'Signal']):
+    df = data.copy()
+    close = df[close_col]
+    df[f'EMA{short_term}'] = close.ewm(span=short_term, adjust=False).mean()
+    df[f'EMA{long_term}'] = close.ewm(span=long_term, adjust=False).mean()
+    df['MACD'] = df[f'EMA{short_term}'] - df[f'EMA{long_term}']
+    df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    return df[ret_cols]
+
 
 def create_labels(prices, future_horizon=1, threshold=0.01):
     """
@@ -212,7 +241,7 @@ def create_labels(prices, future_horizon=1, threshold=0.01):
     price_change = (future_prices - prices) / prices  # Calculate percentage change
 
     # Create labels based on threshold
-    labels = np.where(price_change > threshold,2 ,
+    labels = np.where(price_change > threshold, 2,
                       np.where(price_change < -threshold, 0, 1))
 
     # Drop the last `future_horizon` rows (no future price available)
@@ -223,26 +252,42 @@ def create_labels(prices, future_horizon=1, threshold=0.01):
 
 
 def calc_returns(price_series, day_offset=1):
-
-    returns = price_series /  price_series.shift(day_offset) - 1.0
+    returns = price_series / price_series.shift(day_offset) - 1.0
 
     return returns
 
-def calc_daily_vol(returns):
+
+def calc_daily_vol(returns, VOL_LOOKBACK=120):
     vol = returns.ewm(span=VOL_LOOKBACK,
-                       min_periods=VOL_LOOKBACK).std().ffill()
+                      min_periods=VOL_LOOKBACK).std().ffill()
     return vol
 
 
-def vol_scaled_returns(returns, daily_vol=pd.Series(None)):
+def high_lows(data, hl_lens=[5, 20, 50], normalize_features=True):
+    features = []
 
+    for i in hl_lens:
+        data[f'high_{i}'], data[f'low_{i}'] = data.High.rolling(i).max(), data.Low.rolling(
+            i).min()
+        if normalize_features:
+            data[f'hi{i}_norm'] = (data[f'high_{i}'] - data['Close']) / data.Close
+            data[f'lo{i}_norm'] = (data.Close - data[f'low_{i}']) / data.Close
+            features += [f'hi{i}_norm', f'lo{i}_norm']
+        else:
+            features += [f'high_{i}', f'low_{i}']
+
+    return data[features]
+
+
+def vol_scaled_returns(returns, daily_vol=pd.Series(None)):
     if not len(daily_vol):
         daily_vol = calc_daily_vol(returns)
     annualized_vol = daily_vol * np.sqrt(252)
 
-    return returns * VOL_TARGET/annualized_vol.shift(1)
+    return returns * VOL_TARGET / annualized_vol.shift(1)
 
-def extract_time_features(data, month=True, day = False, dayofweek=False, year=False):
+
+def extract_time_features(data, month=True, day=False, dayofweek=False, year=False):
     df = data.copy(deep=True)
 
     if month:
@@ -280,7 +325,6 @@ def get_trading_days(start_year, end_year):
 
 
 def get_trading_holidays(year):
-
     holidays = pd.to_datetime([
         f'{year}-01-01',  # New Year's Day (if on a weekday)
         f'{year}-07-04',  # Independence Day (if on a weekday)
@@ -326,8 +370,9 @@ def compute_rolling(group, window):
     group['rolling_mean'] = group['Volume'].rolling(window=window, min_periods=1).mean()
     return group
 
-def rvol(data, by='date',length=10):
-    data['datetime'] =  data.index
+
+def rvol(data, by='date', length=10):
+    data['datetime'] = data.index
     data['rolling_mean'] = pd.Series()
 
     if by == 'date':
@@ -343,7 +388,8 @@ def rvol(data, by='date',length=10):
 
     return data['Volume'] / rolling_mean['rolling_mean']
 
-def cum_rvol(data, length=5, groupby='month'):
+
+def cum_rvol(data, length=5, groupby='month', use_delta_instead=False):
     volume = data['Volume']
 
     dts = volume.index
@@ -352,11 +398,11 @@ def cum_rvol(data, length=5, groupby='month'):
         cum_volume = volume.groupby(dts.month, sort=False).cumsum()
 
     prev_mean = lambda days: (
-            cum_volume
-            .rolling(days, closed='left')
-            .mean()
-            .reset_index(0, drop=True)  # drop the level with dts.time
-        )
+        cum_volume
+        .rolling(days, closed='left')
+        .mean()
+        .reset_index(0, drop=True)  # drop the level with dts.time
+    )
 
     return cum_volume / prev_mean(length)
 
@@ -365,7 +411,8 @@ def wwma(values, n):
     """
      J. Welles Wilder's EMA
     """
-    return values.ewm(alpha=1/n, adjust=False).mean()
+    return values.ewm(alpha=1 / n, adjust=False).mean()
+
 
 def tr(data, high='High', low='Low', close='Close', normalized=False):
     df = data.copy()
@@ -374,20 +421,103 @@ def tr(data, high='High', low='Low', close='Close', normalized=False):
     df['tr2'] = np.abs(data[low] - data[close].shift(1))
     tr = df[['tr0', 'tr1', 'tr2']].max(axis=1)
     if normalized:
-        return tr /df[close]
+        return tr / df[close]
     else:
         return tr
 
-def atr(data,high='High', low='Low', close='Close', length=7, normalized=False):
+
+def atr(data, high='High', low='Low', close='Close', length=7, normalized=False):
     true_range = tr(data, high, low, close)
     atr = wwma(true_range, length)
     if normalized:
-        return atr /data[close]
+        return atr / data[close]
     else:
-        return  atr
+        return atr
 
-def natr(data, high, low, close, length):
-    return atr(data, high,low, close, length)/close
+def get_range(data, start_time:dt.time, end_time:dt.time):
+    filtered_data = data.loc[start_time:end_time]
+    hls = filtered_data.groupby(filtered_data.index.date).apply(range_t)
+    df = pd.DataFrame({'Highs': [hl[0] for hl in hls],
+                       'Lows': [hl[1] for hl in hls]
+                       }, index=filtered_data.loc[end_time].index)
+
+    return df
+
+def rsv(returns: pd.Series) -> pd.DataFrame:
+    """
+    Calculate daily realized semivariance from high-frequency returns.
+
+    Parameters:
+    -----------
+    returns : pd.Series
+        A datetime-indexed series of high-frequency returns.
+
+    Returns:
+    --------
+    pd.DataFrame
+        A DataFrame indexed by date with columns 'RS_neg' and 'RS_pos'.
+    """
+    data = []
+    for date, group in returns.groupby(returns.index.date):
+        rs_neg = np.sum((group[group < 0])**2)
+        rs_pos = np.sum((group[group > 0])**2)
+        data.append((pd.to_datetime(date), rs_neg, rs_pos))
+
+    # Create a DataFrame from collected rows
+    rs_df = pd.DataFrame(data, columns=['date', 'RS_neg', 'RS_pos'])
+    rs_df.set_index('date', inplace=True)
+    return rs_df
+
+def vsa(df, volume_col='Volume', normalization_lb=30):
+    data = df.copy(deep=True)
+
+    ATR = atr(data, length=normalization_lb)
+    med_vol =data[volume_col].rolling(normalization_lb).median()
+    data['norm_range'] = (df.High-df.Low)/ATR
+    data['norm_volume'] = data[volume_col]/med_vol
+    norm_range = data.norm_range.to_numpy()
+    norm_volume = data.norm_volume.to_numpy()
+
+    range_dev = np.zeros(len(data))
+    range_dev[:] = np.nan
+
+    for i in range(normalization_lb * 2, len(data)):
+        window = data.iloc[i - normalization_lb + 1: i + 1]
+        slope, intercept, r_val, _, _ = linregress(window.norm_volume, window.norm_range)
+
+        if slope <= 0.0 or r_val < 0.2:
+            range_dev[i] = 0.0
+            continue
+
+        pred_range = intercept + slope * norm_volume[i]
+        range_dev[i] = norm_range[i] - pred_range
+
+    return range_dev
+
+def relative_vsa(df, volume_col='Volume', normalization_lb=31,alt_range_norm=False):
+    data = df.copy()
+    rolling_mean = data[volume_col].groupby(data.index.time()).apply(compute_rolling, window=normalization_lb)
+    data['norm_volume'] = data[volume_col]/rolling_mean['rolling_mean']
+    data['norm_range'] = atr(data, length=normalization_lb)
+    norm_range = data.norm_range.to_numpy()
+    norm_volume = data.norm_volume.to_numpy()
+
+    range_dev = np.zeros(len(data))
+    range_dev[:] = np.nan
+
+    for i in range(normalization_lb * 2, len(data)):
+        window = data.iloc[i - normalization_lb + 1: i + 1]
+        slope, intercept, r_val, _, _ = linregress(window.norm_volume, window.norm_range)
+
+        if slope <= 0.0 or r_val < 0.2:
+            range_dev[i] = 0.0
+            continue
+
+        pred_range = intercept + slope * norm_volume[i]
+        range_dev[i] = norm_range[i] - pred_range
+
+    return range_dev
+
 
 
 def kama(price, period=10, period_fast=2, period_slow=30):
@@ -413,6 +543,68 @@ def kama(price, period=10, period_fast=2, period_slow=30):
     return kama
 
 
+def kama_w_bands(price: pd.Series, period=10, period_fast=2, period_slow=28, std_band_width=1.5, normalize=True):
+    kama_ma = kama(price, period, period_fast, period_slow)
+    kama_hi = kama_ma + price.rolling(period).std() * std_band_width
+    kama_lo = kama_ma - price.rolling(period).std() * std_band_width
+
+    kama_df = pd.DataFrame({f'kama_{period}': kama_ma,
+                            f'kama_{period}_upper': kama_hi,
+                            f'kama_{period}_lower': kama_lo})
+
+    return kama_df
+
+
+def plot_two_axes(series1, *ex_series):
+    plt.style.use('dark_background')
+    ax = series1.plot(color='green')
+    ax2 = ax.twinx()
+    for i, series in enumerate(ex_series):
+        series.plot(ax=ax2, alpha=0.5)
+    # plt.show()
+
+
+def hawkes_process(data: pd.Series, kappa: float):
+    assert (kappa > 0.0)
+    alpha = np.exp(-kappa)
+    arr = data.to_numpy()
+    output = np.zeros(len(data))
+    output[:] = np.nan
+    for i in range(1, len(data)):
+        if np.isnan(output[i - 1]):
+            output[i] = arr[i]
+        else:
+            output[i] = output[i - 1] * alpha + arr[i]
+    return pd.Series(output, index=data.index) * kappa
+
+
+def vol_signal(close: pd.Series, vol_hawkes: pd.Series, lookback: int):
+    signal = np.zeros(len(close))
+    q05 = vol_hawkes.rolling(lookback).quantile(0.05)
+    q95 = vol_hawkes.rolling(lookback).quantile(0.95)
+
+    last_below = -1
+    curr_sig = 0
+
+    for i in range(len(signal)):
+        if vol_hawkes.iloc[i] < q05.iloc[i]:
+            last_below = i
+            curr_sig = 0
+
+        if vol_hawkes.iloc[i] > q95.iloc[i] \
+                and vol_hawkes.iloc[i - 1] <= q95.iloc[i - 1] \
+                and last_below > 0:
+
+            change = close.iloc[i] - close.iloc[last_below]
+            if change > 0.0:
+                curr_sig = 1
+            else:
+                curr_sig = -1
+        signal[i] = curr_sig
+
+    return signal
+
+
 def EWMA_Volatility(rets, lam):
     sq_rets_sp500 = (rets ** 2).values
     EWMA_var = np.zeros(len(sq_rets_sp500))
@@ -422,6 +614,27 @@ def EWMA_Volatility(rets, lam):
 
     EWMA_vol = np.sqrt(EWMA_var * 250)
     return pd.Series(EWMA_vol, index=rets.index, name="EWMA Vol {}".format(lam))[1:]
+
+
+def label_reversion(data, atr_mult=1.25, atr_period=14, momentum_period=3):
+    df: object = data.copy()
+    true_range = tr(df)
+    df['ATR'] = atr(df, length=atr_period)
+    df['TR'] = true_range
+    df['ret'] = df.Close.pct_change()
+    df['pd_ret'] = df.ret.shift(1)
+
+    df['label'] = ((df['TR'] > atr_mult * df['ATR']) | (
+            (np.abs(df.ret) > np.abs(df.pd_ret)) & (np.sign(df.ret) != np.sign(df.pd_ret))
+    )).astype(int)
+    return df.label
+
+import statsmodels.api as sm
+#def vol_regression(rv_data, daily_col='rv_d', weekly_col='rv_w', monthly='rv_m',target='rv_t' ):
+
+
+
+
 
 class fft_decomp:
 

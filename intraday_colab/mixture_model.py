@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from typing import List, Dict, Tuple, Union, Optional
 
 # Import the TimeSeriesFeatureExtractor class that we created earlier
-from intraday.feature_engineering import TimeSeriesFeatureExtractor, PeakExtractor
+from intraday_colab.feature_engineering import TimeSeriesFeatureExtractor, PeakExtractor
 
 
 class TimeSeriesGMMClustering:

@@ -1,86 +1,150 @@
-from statsforecast import StatsForecast
-from statsforecast.models import GARCH, ARCH
-from sklearn.ensemble import RandomForestClassifier
-from xgboost import XGBClassifier
-from statsforecast.models import (
-    GARCH,
-    ARCH,
-    Naive
-)
-from feature_engineering import calc_daily_vol, EWMA_Volatility
-from utilsforecast.losses import mae, mse
-import yfinance as yf
-import  numpy as np
+import os.path
+import pickle
+import pandas as pd
+from feature_engineering import log_returns
+import statsmodels.api as sm
+from linear_models import multivariate_regression
+from sklearn.linear_model import Lasso
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+import numpy as np
+from ml_build.utils import save_model
+from arch import arch_model
+from tests import eval_model as eval
+from sc_loader import sierra_charts as sch
+from sklearn.metrics import mean_squared_error, r2_score
 
-models = [ARCH(1),
-          ARCH(2),
-          GARCH(1,1),
-          GARCH(1,2),
-          GARCH(2,2),
-          GARCH(2,1),
-          Naive()]
-
-class vol_modeling:
-
-    def __init__(self, tickers=['^GSPC'],lag=1, n_regimes=3, horizon=5, scale_returns=False, start='2009-01-01', end='2025-03-15', interval='1d',):
-        data = yf.download(tickers, start, end, multi_level_index=False, interval=interval)
-        self.tickers = tickers
-        self.h = horizon
-        self.regimes = range(0, n_regimes)
-        self.model_info = {}
-        self.data = self.reshape_df(data, lag)
+scaler = StandardScaler()
+def mm_scale(X: pd.DataFrame):
+    x_max = X.max()
+    x_min = X.min()
+    x_scaled = (X - x_min) / (x_max - x_min)
+    return x_scaled
 
 
-    def reshape_df(self, data, lags):
-        df = data.copy()
-        df = df.loc[:, ('Close', self.tickers)]
-        df.columns = df.columns.droplevel()  # drop MultiIndex
-        df = df.reset_index()
-        prices = df.melt(id_vars='Date')
-        prices = prices.rename(columns={'Date': 'ds', 'Ticker': 'unique_id', 'value': 'y'})
-        prices = prices[['unique_id', 'ds', 'y']]
-        prices['rt'] = prices['y'].div(prices.groupby('unique_id')['y'].shift(lags))
-        prices['rt'] = np.log(prices['rt']) * 100
-        returns = prices[['unique_id', 'ds', 'rt']]
-        returns = returns.rename(columns={'rt': 'y'})
+def mm_inverse(original_df, scaled_df):
+    x_max = original_df.max()
+    x_min = original_df.min()
+    return scaled_df * (x_max - x_min) + x_min
 
-        return returns
+def r2_sum(data, freq='date'):
+
+    rv_d = data.returns.groupby(data.index.date).apply(lambda x:
+                                                           np.sum(x.dropna() ** 2))
 
 
-    def fit_models(self, freq='B', n_jobs=-1, fcast_horizon=5, step_size=5, n_windows=48):
-        sf = StatsForecast(
-            models=models,
-            freq=freq,
-            n_jobs=n_jobs
-        )
-        self.cv_res = sf.cross_validation(h=fcast_horizon, df=self.data, n_windows=n_windows, step_size=step_size)
-        self.sf = sf
-        return self.cv_res
+    return rv_d
 
-    def evaluate_model(self, method='mae'):
-        self.cv_res.rename(columns={'y': 'actual'}, inplace=True)
+def hls_sum(data):
+    range = (data.High - data.Low)/data.Open
+    log_rv = range.groupby(data.index.date).apply(lambda x:
+                                                        np.sum(x.dropna() ** 2))
+    return log_rv
 
-        models = self.cv_res.columns.drop(['unique_id', 'ds', 'cutoff', 'actual'])
-        mae_cv = mae(self.cv_res, models=models, target_col='actual').set_index('unique_id')
-        return  mae_cv.idxmin(axis=1)
+class HAR:
+
+    def __init__(self, data: pd.DataFrame, method='r2_sum'):
+        """data : pd.Dataframe containing Open, High, Low, Close"""
+
+        self.model = None
+        self.y_test = None
+        self.y_train = None
+        self.X_test = None
+        self.X_train = None
+        self.data = data
+        self.vols = {}
+        self.data['returns'] = log_returns(data['Close'])
+        if method == 'hls_sum':
+            rv_d = hls_sum(data)
+        else:
+            rv_d = r2_sum(data)
+
+        self.rv = pd.DataFrame(data={
+            'rv_d' :rv_d.shift(1),
+            'rv_w' : rv_d.rolling(5).mean(),
+            'rv_m': rv_d.rolling(22).mean(),
+            'rv_t': rv_d
+        })
+
+        self.rv = self.rv[~np.isinf(self.rv)].ffill().dropna()
+
+
+        return
+
+    def hl_vol(self, high_col='High', low_col='Low'):
+        data = self.data
+        vol = np.log(data[high_col])- np.log(data[low_col])
+        monthly_vol = vol.rolling(21 ).mean()
+        weekly_vol = vol.rolling(5).mean()
+
+    def transform(self, train_split_size=0.7, scale=False, target_col='rv_t'):
+        if scale:
+            data = scaler.fit_transform(self.rv)
+            self.scaled = True
+        else:
+            data = self.rv
+        data = sm.add_constant(data)
+        # Split train and test sets
+        split = int(train_split_size * self.rv.shape[0])
+        self.target_col = 'rv_t'
+        X = data.drop(target_col, axis=1)
+        y = data[[self.target_col]]
+        self.X_train, self.X_test = X[:split], X[split:]
+        self.y_train, self.y_test = y[:split], y[split:]
+
+        return
+
+    def fit_transform(self,scale=False, train_split_size=0.7, penalty='l1', reg_param=0.1):
+        self.transform(train_split_size, scale)
+        res = self.fit(penalty=penalty, alpha=reg_param, L1_wt=0)
+
+        return res
 
 
 
-start='2009-01-01'
-end='2025-03-15'
-horizon = 5
-lags = 1
-interval = '1d'
-freq = 'B'
-n_jobs = 1
+    def fit(self, penalty=None, alpha=0.8, L1_wt=0):
+        if penalty == 'l1':
+            res = sm.OLS(self.y_train, self.X_train).fit_regularized(alpha=0.1, L1_wt=L1_wt)
+        else:
+            res = sm.OLS(self.y_train, self.X_train).fit()
+
+        features = self.rv.columns
+        test_predict = res.predict(self.X_test)
+        y_test_vals = ~self.y_test.isna()
+
+        eval_res = eval(self.y_test[y_test_vals], test_predict.loc[y_test_vals.index])
+        print(eval_res)
+        self.model = res
+        self.eval_res = eval_res
+        eval_res.update({'Train_End': len(self.X_train), 'Test_Length': len(self.X_test)})
+        return res
 
 
-tickers = ['CL=F', 'GC=F', 'NQ=F','6E=F', '6J=F']
+    def save_model(self, dir, model_name):
 
-vmods = vol_modeling(tickers,horizon=5, interval='1d')
+        if not os.path.isdir(dir):
+            os.mkdir(dir)
+        if not os.path.isdir(dir+model_name):
+            os.mkdir(dir+model_name+'\\')
 
-vmods.fit_models(freq='C',n_jobs=1, fcast_horizon=2, step_size=3, n_windows=200)
-vmods.evaluate_model()
+        working_dir = dir+model_name+'\\'
+        save_model(self.model, working_dir+model_name)
+
+        os.chdir(working_dir)
+        with open(f'{model_name}_params', 'wb') as f:
+            f.write(self.eval_res)
+
+class VolML:
+    def __init__(self, data):
+
+        return
 
 
+sc = sch()
+le = sc.get_chart('LE_F').resample('5min').apply(sc.resample_logic)
+
+har_gold = HAR(le, 'r2_sum')
+from sklearn.preprocessing import MinMaxScaler
+har_gold.rv = har_gold.rv[~np.isinf(har_gold.rv)].ffill().dropna()
+har_gold.transform(scale=False)
+har_gold.fit_transform(penalty=None)
 
