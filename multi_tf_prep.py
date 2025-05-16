@@ -346,10 +346,3 @@ class MultiTfModel:
         self.model_info['ML'].update({'Type': method, 'Hyperparams': params, 'Features': self.features})
 
         self.model_info.update({'Features': self.features})
-
-import pandas as pd; gc_f = pd.read_parquet('gc_f.parq')
-MTM= MultiTfModel
-gc_mtm = MTM(gc_f, ['3min', '10min', '20min', '40min', '2h', '1d'])
-tfs = [*gc_mtm.dfs_dict.keys()][:3]
-for i in tfs:gc_mtm.volatility_signals(i, realized_vol=True)
-gc_mtm.train_HAR()
