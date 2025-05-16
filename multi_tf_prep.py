@@ -207,6 +207,7 @@ class MultiTfTrend:
                   log_file='har_eval', regularize=False, L1_wt=1.0, cv=3, keep_models_in_res=True):
 
         rvs = self.dfs_dict['1d'].filter(like='rv').dropna()
+
         if scale_data:
             self.rv_scaler = StandardScaler()
             rvs = pd.DataFrame(self.rv_scaler.fit_transform(rvs), columns=rvs.columns)
@@ -225,9 +226,9 @@ class MultiTfTrend:
                                                 'rv_w': rv_d.shift(1).rolling(5).mean(),
                                                 'rv_m': rv_d.shift(1).rolling(22).mean(),
                                                 'rv_t': rv_d}, index=rvs.index).dropna()
-            har_df = self.har_df.copy(deep=True)
+            har_df = self.har_df[column].copy(deep=True)
 
-            df = har_df.ffill().dropna()[column]
+            df = har_df.ffill().dropna()
             # split_ix = int(self.train_ratio * len(rvs))
             # self.models_info.update({'test_idx': split_ix})
             # train_x, test_x = df.iloc[:split_ix, :-1].to_numpy(), df.iloc[split_ix:, :-1].to_numpy()
@@ -245,6 +246,7 @@ class MultiTfTrend:
                                                   penalty=None)
 
             df['predictions'] = results['model'].predict(df.drop('rv_t', axis=1))
+
             if not keep_models_in_res:
                 del results['model']
 
