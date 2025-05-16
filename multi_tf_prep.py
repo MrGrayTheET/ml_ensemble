@@ -251,7 +251,7 @@ class MultiTfModel:
                                                   penalty=None)
 
             df['predictions'] = results['model'].predict(df.drop('rv_t', axis=1))
-            pred_idx = df.predictions.dropna()
+            pred_idx = df.predictions.dropna().index
 
 
 
