@@ -251,15 +251,15 @@ class MultiTfModel:
                                                   penalty=None)
 
             df['predictions'] = results['model'].predict(df.drop('rv_t', axis=1))
-            df
+            pred_idx = df.predictions.dropna()
+
 
 
             if save_best_only:
                 rmse = results['rmse']
-                tf = column
                 if rmse < best_rmse:
                     best_rmse = rmse
-                    best_score = tf
+                    best_score = column
                 else:
                     del results['model']
             else:
@@ -267,13 +267,17 @@ class MultiTfModel:
                 self.har_df.loc[pred_idx, (column, 'predictions')] = df['predictions']
 
             evals.update({col:results})
+
         if save_best_only:
             self.har_df[(best_rmse, 'predictions')] = np.nan
             self.har_df.loc[pred_idx, (best_score, 'predictions')] = df['predictions']
 
             if add_feature:
-                self.dfs_dict['1d'].loc[pred_idx]['HAR_preds'] = df['predictions']
+                self.dfs_dict['1d']['HAR_preds'] = np.nan
+                self.dfs_dict['1d'].loc[pred_idx, 'HAR_preds'] = df['predictions']
                 self.feats_dict['1d']['Additional'].append('HAR_preds')
+
+
 
 
 
