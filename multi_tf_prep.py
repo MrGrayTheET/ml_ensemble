@@ -55,7 +55,7 @@ class MultiTfModel:
             self.annualized_vol = vol * np.sqrt(252)
 
         for i in intraday_tfs:
-            self.dfs_dict.update({i: data.resample(i).apply(sc.resample_logic).ffill().dropna()})
+            self.dfs_dict.update({i: data.resample(i).apply(resample_dict).ffill().dropna()})
             self.dfs_dict[i]['returns'] = log_returns(self.dfs_dict['1d'].Close)
             if vol_scale:
                 self.dfs_dict[i]['scaled_returns'] = self.dfs_dict[i]['returns'] * VOL_TARGET / self.annualized_vol
@@ -63,6 +63,7 @@ class MultiTfModel:
             self.feats_dict.update({i: {'Volatility': [], 'Volume': [], 'Trend': [], 'Temporal': [], 'Additional': []}})
 
         self.models_dict = {'vol':None, 'trend':None, 'reversal':None}
+
     def volatility_signals(self, timeframe, ATR=False, ATR_length=14, normalize_atr=True,
                            hawkes=False, hawkes_mean=168, kappa=0.1, hawkes_signal_lb=21, hawkes_binary_signal=True,
                            normalize=True, range_width=False, range_length=20, normalize_range_len=63,
@@ -250,22 +251,24 @@ class MultiTfModel:
 
 
         if add_as_feature:
-            self.dfs_dict[tf][f'HAR-{har_type}_preds'] =self.har_df.preds
+            self.dfs_dict[tf][f'HAR-{har_type}_preds'] = self.har_df.preds
             if f'HAR-{har_type}_preds' not in self.feats_dict[tf]['Additional']:
                 self.feats_dict[tf]['Additional'].append(f'HAR-{har_type}_preds')
 
         return self.vol_model
 
     def transfer_feature(self, from_tf, to_tf, feature_name):
-        x = self.dfs_dict[from_tf][feature_name]
+        X = self.dfs_dict[from_tf][feature_name]
         y_df = self.dfs_dict[to_tf]
-        y_df[feature_name] = x
-        self.dfs_dict[to_tf] = y_df
+        y_df[feature_name] = X
+        self.dfs_dict[to_tf] = y_df.ffill()
+        if feature_name not in self.feats_dict[to_tf]['Additional']:
+            self.feats_dict[to_tf]['Additional'].append(feature_name)
+
         return y_df
 
     def prepare_for_training(self, training_tf, target_horizon, feature_types=['Volatility', 'Trend', 'Volume'],
-                             vol_normalized_returns=True, normalize_lb=120, additional_tf=None, additional_features=[],
-                             train_size=0.8, target_vol=False):
+                             vol_normalized_returns=True, additional_tf=None, additional_features=None, target_vol=False):
 
         self.training_df = self.dfs_dict[training_tf]
         features = []
@@ -285,35 +288,13 @@ class MultiTfModel:
                                                                window=target_horizon).shift(-target_horizon)
 
         if additional_tf is not None:
-            extra_feats = self.dfs_dict[additional_tf]
+            for feat in additional_features:
+                self.transfer_feature(from_tf=additional_tf, to_tf=training_tf, feature_name=feat)
 
-            for i in additional_features:
-                self.training_df[f'{additional_tf}_{i}'] = np.nan
-                self.training_df[f'{additional_tf}_{i}'] = extra_feats[i]
-                self.training_df[f'{additional_tf}_{i}'] = self.training_df[
-                    f'{additional_tf}_{i}'
-                ].ffill().dropna()
-
-                features.append(f'{additional_tf}_{i}')
-
-        self.features = list(chain.from_iterable([feats[k] for k in feature_types])) + features
-
+        self.features = list(chain.from_iterable([feats[k] for k in feature_types]))
         self.training_df = self.training_df.ffill().dropna()
 
         return
-
-    def time_based_target(self, target_tf, training_start, training_end,
-                          target_start, target_end, feature_types=[], target_type='Vol', x_feature_classes=4):
-        features = sum([self.feats_dict[target_tf][i] for i in feature_types], [])
-        data = self.dfs_dict[target_tf].drop_duplicates()
-
-        fh_data = data.loc[training_start:training_end].dropna()
-
-        bh_data = data.loc[target_start:target_end].dropna()
-        target_returns = bh_data.groupby(bh_data.index.date).apply(
-            lambda x: pd.DataFrame({'close_returns': np.log(x.Close[0]) - np.log(x.Close[-1]),
-                                    'vol': np.sqrt(np.sum(x.returns ** 2)),
-                                    'range': (np.max(x.High) - np.min(x.Low)) / x.Close[0]}, index=[x.index.date]))
 
     def train_model(self, method='xgbclf',train_size=0.8, params=None, high_percentile=85, low_percentile=20,
                     save_file='save_eval.csv', plot=True, linear_cv=5, linear_alpha=0.8):

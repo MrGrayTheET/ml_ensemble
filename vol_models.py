@@ -3,14 +3,11 @@ import pickle
 import pandas as pd
 from feature_engineering import log_returns, historical_rv, rsv, ohlc_rs_dict
 from linear_models import multivariate_regression
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.preprocessing import StandardScaler
 import numpy as np
 from ml_build.utils import save_model
-from sc_loader import sierra_charts as sch
 from copy import deepcopy
-from TSlib.data_provider.data_factory import data_provider
 
-from sklearn.metrics import mean_squared_error, r2_score
 
 resample_dict = ohlc_rs_dict(include_bid_ask=True)
 scaler = StandardScaler()
@@ -63,7 +60,7 @@ class HAR:
 
 
         return self.rsv_
-    
+
     def pd_model(self):
         pd_1 = log_returns(self.daily_data.Close)
         pd_5 = log_returns(self.daily_data.Close, 5)
