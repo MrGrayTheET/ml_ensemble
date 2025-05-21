@@ -78,16 +78,16 @@ def correlations(data, heatmap=True, feature_correlation=False, ticker=None):
 
 
 def multivariate_regression(df: pd.DataFrame, X_cols: list, y_col: str, penalty=None, alpha=0.8, train_split=False,scaler=None,
-                            train_size=0.8,cv=3, params=None):
+                            train_size=0.8,cv=3, params=None, return_data=False):
     reg_df = df.copy().ffill().dropna()
 
     if scaler is not None:
-        reg_df = pd.DataFrame(scaler.fit_transform(df), columns=reg_df.columns)
+        reg_df = pd.DataFrame(scaler.fit_transform(df), columns=reg_df.columns, index=reg_df.index)
 
     X = reg_df[X_cols].values
     y = reg_df[y_col].values
 
-    if  (penalty == 'cv'):
+    if penalty == 'cv':
         regressor = LassoCV(cv=cv, random_state=42)
     elif penalty == 'l1':
         regressor = Lasso(alpha=alpha, random_state=42)
@@ -118,7 +118,8 @@ def multivariate_regression(df: pd.DataFrame, X_cols: list, y_col: str, penalty=
         'model': model
 
     }
+    if return_data:
+        res['X'] = reg_df[X_cols]
 
-    print(res)
 
     return res
