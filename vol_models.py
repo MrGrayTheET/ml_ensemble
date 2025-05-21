@@ -1,7 +1,7 @@
 import os.path
 import pickle
 import pandas as pd
-from feature_engineering import log_returns, historical_rv, rsv
+from feature_engineering import log_returns, historical_rv, rsv, ohlc_rs_dict
 from linear_models import multivariate_regression
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 import numpy as np
@@ -12,8 +12,7 @@ from TSlib.data_provider.data_factory import data_provider
 
 from sklearn.metrics import mean_squared_error, r2_score
 
-sc = sch()
-le = sc.get_chart('LE_F')
+resample_dict = ohlc_rs_dict(include_bid_ask=True)
 scaler = StandardScaler()
 
 class HAR:
@@ -41,7 +40,7 @@ class HAR:
             'rv_m': rv_d.rolling(22).mean(),
             'rv_t': historical_rv(self.returns, horizon, annualize=annualize_vol).shift(-horizon)
         })
-        self.daily_data = intraday_data.resample('1d').apply(sc.resample_logic).dropna()
+        self.daily_data = intraday_data.resample('1d').apply(resample_dict).dropna()
         self.daily_data = self.daily_data.loc[sorted(set(self.rv_.index) & set(self.daily_data.index))]
 
 
@@ -64,6 +63,7 @@ class HAR:
 
 
         return self.rsv_
+    
     def pd_model(self):
         pd_1 = log_returns(self.daily_data.Close)
         pd_5 = log_returns(self.daily_data.Close, 5)

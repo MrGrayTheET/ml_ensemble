@@ -1,10 +1,12 @@
 
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sc_loader import sierra_charts as sch
+
+import feature_engineering
 from feature_engineering import (vsa, vol_signal, vol_scaled_returns,
                                  calc_daily_vol, calc_returns,hawkes_process,
                                  atr, log_returns, kama,rvol, get_range,
-                                 rsv, historical_rv)
+                                 rsv, historical_rv, ohlc_rs_dict)
 
 from ml_build.ml_model import ml_model as ml, xgb_params,lgb_clf_params, gbr_params, rfr_params, xgb_clf_params
 from ml_build.utils import prune_non_builtin
@@ -27,7 +29,7 @@ else:
 sc = sch(sc_cfg)
 
 VOL_TARGET = 0.15
-
+resample_dict = ohlc_rs_dict(include_bid_ask=True)
 
 class MultiTfModel:
 
@@ -45,7 +47,7 @@ class MultiTfModel:
         self.feats_dict = {}
         self.train_ratio = train_test_ratio
         self.model_info = {'Dir': project_dir, 'RV_freq': hf_timeframe, 'ML': {}, 'Eval': {}}
-        self.dfs_dict['1d'] = data.resample('1d').apply(sc.resample_logic).ffill().dropna()
+        self.dfs_dict['1d'] = data.resample('1d').apply(resample_dict).ffill().dropna()
         self.dfs_dict['1d']['returns'] = log_returns(self.dfs_dict['1d'].Close)
         if vol_scale:
             self.dfs_dict['1d']['scaled_returns'] = vol_scaled_returns(self.dfs_dict['1d'].returns, vs_lb)
