@@ -1,12 +1,15 @@
 import numpy as np
 import pandas as pd
+import sys; sys.path.append('C:\\Users\\nicho\PycharmProjects\ml_ensembles\TSlib')
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import argparse as ap
 from torch.utils.data import Dataset, DataLoader
 from TSlib.models.Autoformer import Model as AF
-
+from TSlib.data_provider.data_loader import Dataset_Custom
+from TSlib.data_provider.data_factory import data_provider
 
 def create_time_features(index):
     return pd.DataFrame({
@@ -16,6 +19,29 @@ def create_time_features(index):
         "month": index.month / 12.0
     }, index=index)
 
+
+
+train_args = ap.Namespace(
+                    batch_size=1,
+                    freq='m',
+                    data='custom',
+                    root_path='F:\\charts\\learning_data\\timesnet\\',
+                    embed=0,
+                    task_name='short_term_forecast',
+                    data_path='gc_f2.csv',
+                    size=None,
+                    seq_len=48,
+                    pred_len=48,
+                    label_len=24,
+                    num_workers=1,
+                    seasonal_patterns=None,
+                    features='MS',
+                    augmentation_ratio=-1,
+                    target='target_returns',
+                    seed=42)
+
+
+train_dataset, train_dataloader = data_provider(train_args, 'train')
 
 def create_windows(data, time_features, seq_len, label_len, pred_len, target_col=0):
     """
@@ -85,6 +111,8 @@ class TimeSeriesDataset(Dataset):
             self.x_mark_dec[idx],
             self.y[idx]
         )
+
+
 class Config:
 
     def __init__(self, seq_len, label_len, pred_len, batch_size, df):

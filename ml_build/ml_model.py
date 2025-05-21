@@ -1,12 +1,15 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from ml_build.utils import clean_data, evaluate_model, evaluate_clf, create_labels,save_model, load_model
+from ml_build.utils import clean_data, evaluate_model, evaluate_clf, create_labels, create_label_dataset,save_model, load_model
 from xgboost import XGBRegressor, XGBClassifier
+import lightgbm as lgb
+from lightgbm import LGBMClassifier as LGBClf, LGBMRegressor as LGBReg
 from sklearn.model_selection import ParameterGrid, GridSearchCV
-from sklearn.neighbors import KNeighborsRegressor
+from sklearn.neighbors import KNeighborsRegressor, KNeighborsClassifier
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, r2_score, root_mean_squared_error
+from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, r2_score,log_loss, root_mean_squared_error, classification_report, confusion_matrix
+
 
 rfr_params = {'max_depth': [3,5],
               'max_features': [5,6,7],
@@ -17,6 +20,17 @@ gbr_params = {'max_features': [5,6,7],
               'n_estimators':[200],
               'subsample':[0.6],
               'random_state':[42]}
+
+lgb_clf_params ={
+    'objective':'multiclass',
+    'num_class':3,
+    'metric':'multi_logloss',
+    'num_leaves': 31,
+    'max_depth': -1,
+    'learning_rate':  0.01,
+    'n_estimators': 100,
+    "verbose": 1,
+}
 
 xgb_params = {
     'learning_rate': [0.01, 0.1, 0.2],
@@ -43,6 +57,8 @@ class ml_model:
 
     def __init__(self, data, features,target_column,train_test_size=0.8,scale_x=False,
                  scale_y=False, log_results=False, log_file_path='ml_log'):
+        self.eval = None
+        self.clf_train, self.clf_test = None, None
         self.feats = features
         self.model = None
         self.train_predict, self.test_predict = \
@@ -50,6 +66,9 @@ class ml_model:
 
         self.params = {}
         self.x_final = data[features].tail(50)
+
+        self.target_data = data[target_column]
+        self.train_size = 0.8
 
 
         if type(data.index) == pd.DatetimeIndex:
@@ -76,8 +95,7 @@ class ml_model:
 
     def tree_model(self, parameter_dict, gbr=False, plot_pred=True, plot_importances=True, save_params=False,
                    params_file='rfr_params.csv', evaluate=True, eval_log='model_eval.csv'):
-        test_scores = []
-        rmse_scores = []
+
 
         if not gbr:
             model = RandomForestRegressor(n_estimators=200)
@@ -85,6 +103,9 @@ class ml_model:
         else:
             model = GradientBoostingRegressor(n_estimators=200)
             name = 'gbr'
+
+        test_scores = []
+        rmse_scores = []
 
         for g in ParameterGrid(parameter_dict):
             model.set_params(**g)
@@ -145,6 +166,20 @@ class ml_model:
 
         return plt.show()
 
+    def lgb_clf(self, params ,plot_importances=True,high_percentile=80, low_percentile=20,num_rounds=100  ):
+        self.clf_train, self.clf_test = create_label_dataset(self.target_data,len(self.y_train),high_percentile, low_percentile)
+        train_data = lgb.Dataset(self.x_train, label=self.clf_train, free_raw_data=False)
+        valid_data = lgb.Dataset(self.x_test, label=self.clf_test, reference=train_data, free_raw_data=False)
+        self.model = lgb.train(params, num_boost_round=num_rounds, callbacks=[lgb.early_stopping(10)],train_set=train_data,valid_sets=[valid_data])
+        y_prob = self.model.predict(self.x_test, num_iteration=self.model.best_iteration)
+        y_pred = np.argmax(y_prob, axis=1)
+        self.eval  = evaluate_clf(y_pred, y_prob, self.clf_test, sorted_features=True)
+        print(classification_report(self.clf_test, y_pred, labels=[0, 1, 2]))
+
+
+
+        return self.model
+
     def neighbors_model(self, n_start, n_end, plot_pred=True,
                         evaluate=True, eval_log='model_eval.csv'):
         results_df = pd.DataFrame(columns=['train_r2', 'test_r2', 'n_neighbors'], index=range(n_start, n_end))
@@ -174,6 +209,28 @@ class ml_model:
 
         return self.model
 
+    def neighbors_clf(self, k_start, k_end, evaluate=True, high_p=80, low_p=20):
+        best_acc = 0
+
+        self.clf_train, self.clf_test = create_labels(self.y_train, high_p, low_p), create_labels(self.y_test, high_p, low_p)
+
+        results_df = pd.DataFrame(columns=['accuracy', 'log_loss'], index=np.arange(k_start, k_end+1))
+        for k in range(k_start, k_end):
+            knn = KNeighborsClassifier(n_neighbors=k)
+            knn.fit(self.x_train, self.clf_train)
+            acc = knn.score(self.x_test, self.clf_test)
+            if acc > best_acc: best_acc = acc
+            results_df.loc[k, 0] = acc
+            results_df.loc[k, 1] = log_loss(self.clf_test, knn.predict_proba(self.x_test))
+            print(f'K : {k} ; Accuracy: {acc} ; Log Loss : {results_df.loc[k, 1]}')
+
+        best_k = results_df.loc[results_df['accuracy'] == best_acc].index[0]
+        knn.set_params(**{'n_neighbors':best_k})
+        self.model = knn
+
+        return results_df
+
+
     def xgb_model(self, param_dict, plot_pred=True, plot_importances=True, save_params=True,
                   params_file='xgb_params.csv', evaluate=True, eval_log='xgb_eval.csv'):
         test_scores =[]
@@ -202,7 +259,7 @@ class ml_model:
 
         if evaluate:
             self.eval = evaluate_model(self.test_predict, self.y_test,self.feats, log_file=eval_log, sorted_features=True)
-            print(eval)
+            print(self.eval)
         else:
             pass
 

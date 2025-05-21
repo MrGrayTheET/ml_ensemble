@@ -16,7 +16,7 @@ from sklearn.metrics import (mean_absolute_percentage_error,
 
 
 def clean_data(data, feats, target_col, sequence=False, periods_in=50, periods_out=20,
-               train_split=True, train_size=0.80, scale_x=True, scale_y=False, x_scale_type='standard', y_scale_type='minmax',
+               train_split=True, train_size=0.80, scale_x=True, scale_y=False, x_scale_type='standard', y_scale_type='standard',
                minmax_settings=(0, 1),
                to_tensor=False, return_y_scaler=True):
     # Cleans data and converts to array
@@ -147,6 +147,10 @@ def create_labels(returns, long_p=60, short_p=20):
         y = pd.Series(y, index=returns.index)
 
     return y
+
+def create_label_dataset(returns, train_end_idx, long_p=80, short_p=20, classes=[0, 1, 2]):
+    labels = create_labels(returns,long_p, short_p)
+    return labels[:train_end_idx], labels[train_end_idx:]
 
 
 

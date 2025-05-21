@@ -1,30 +1,39 @@
-import yfinance as yf
-import datetime as dt
-import numpy as np
-import os
-import pandas as pd
+
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sc_loader import sierra_charts as sch
-from feature_engineering import (vsa,
-                                 vol_signal, normalize_hls, calc_daily_vol, calc_returns,
-                                 hawkes_process, atr, log_returns, kama,
-                                 rvol, high_lows, cum_rvol, get_range, rsv)
-from ml_build.ml_model import ml_model as ml, xgb_params, gbr_params, rfr_params, xgb_clf_params
+from feature_engineering import (vsa, vol_signal, vol_scaled_returns,
+                                 calc_daily_vol, calc_returns,hawkes_process,
+                                 atr, log_returns, kama,rvol, get_range,
+                                 rsv, historical_rv)
 
+from ml_build.ml_model import ml_model as ml, xgb_params,lgb_clf_params, gbr_params, rfr_params, xgb_clf_params
+from ml_build.utils import prune_non_builtin
 from linear_models import multivariate_regression
+from vol_models import HAR
+from itertools import chain
+import yfinance as yf
+import datetime as dt
+import pandas as pd
+import numpy as np
+import pickle
+import ast
+import os
 
 if os.name == 'nt':
-    sc_cfg = 'data_config.toml'
+    sc_cfg = 'C:\\Users\\nicho\PycharmProjects\ml_ensembles\data_config.toml'
 else:
     sc_cfg = '/content/drive/MyDrive/utils/sc_config.toml'
 
 sc = sch(sc_cfg)
 
+VOL_TARGET = 0.15
+
 
 class MultiTfModel:
 
-    def __init__(self, data, timeframes=['5min', '10min', '1h', '4h', '1d'], train_test_ratio=0.8,
-                 project_dir="F:\\ML\\multi_tf\\"):
+    def __init__(self, data, intraday_tfs=['5min', '10min', '1h', '4h'], train_test_ratio=0.8, hf_timeframe='5min',
+                 vol_scale=True,
+                 project_dir="F:\\ML\\multi_tf\\", vs_lb=22):
         self.features = None
         self.model = None
         if not os.path.isdir(project_dir): os.mkdir(project_dir)
@@ -35,19 +44,30 @@ class MultiTfModel:
         self.dfs_dict = {}
         self.feats_dict = {}
         self.train_ratio = train_test_ratio
-        for i in timeframes:
+        self.model_info = {'Dir': project_dir, 'RV_freq': hf_timeframe, 'ML': {}, 'Eval': {}}
+        self.dfs_dict['1d'] = data.resample('1d').apply(sc.resample_logic).ffill().dropna()
+        self.dfs_dict['1d']['returns'] = log_returns(self.dfs_dict['1d'].Close)
+        if vol_scale:
+            self.dfs_dict['1d']['scaled_returns'] = vol_scaled_returns(self.dfs_dict['1d'].returns, vs_lb)
+            vol = calc_daily_vol(self.dfs_dict['1d'].returns, vs_lb).ffill()
+            self.annualized_vol = vol * np.sqrt(252)
+
+        for i in intraday_tfs:
             self.dfs_dict.update({i: data.resample(i).apply(sc.resample_logic).ffill().dropna()})
+            self.dfs_dict[i]['returns'] = log_returns(self.dfs_dict['1d'].Close)
+            if vol_scale:
+                self.dfs_dict[i]['scaled_returns'] = self.dfs_dict[i]['returns'] * VOL_TARGET / self.annualized_vol
+
             self.feats_dict.update({i: {'Volatility': [], 'Volume': [], 'Trend': [], 'Temporal': [], 'Additional': []}})
 
-            self.dfs_dict[i]['returns'] = log_returns(data.Close)
-        self.model_info = {'Dir': project_dir}
-
+        self.models_dict = {'vol':None, 'trend':None, 'reversal':None}
     def volatility_signals(self, timeframe, ATR=False, ATR_length=14, normalize_atr=True,
                            hawkes=False, hawkes_mean=168, kappa=0.1, hawkes_signal_lb=21, hawkes_binary_signal=True,
                            normalize=True, range_width=False, range_length=20, normalize_range_len=63,
-                           realized_vol=True, use_semivariance=False, keep_existing_features=False, ):
+                           lagged_vol=True, lag_lengths=[1], average_lags=True, use_semivariance=False,
+                           keep_existing_features=False):
         if keep_existing_features:
-            features = self.feats_dict[timeframe]['Volume']
+            features = self.feats_dict[timeframe]['Volatility']
         else:
             features = []
 
@@ -80,17 +100,18 @@ class MultiTfModel:
                 data[f'{range_length}_highs'] = highs
                 data[f'{range_length}_lows'] = lows
                 features += [f'{range_length}_{i}' for i in ['highs', 'lows']]
-        if realized_vol:
+        if lagged_vol:
             if use_semivariance:
                 data[['rsv_neg', 'rsv_pos']] = rsv(data.returns)
                 self.dfs_dict['1d'][[f'{timeframe}_rsv_neg', f'{timeframe}_rsv_pos']] = data[['rsv_neg', 'rsv_pos']]
 
             else:
-                data['rv'] = data.returns.groupby(data.index.date).apply(lambda x: np.sqrt(np.sum(x ** 2)))
-                self.dfs_dict['1d'][f'{timeframe}_rv'] = data['rv']
+                for i in lag_lengths:
+                    data[f'rv_{i}'] = historical_rv(data.returns, i).ffill()
 
-            data.rv = data.rv.ffill().dropna()
-            features.append('rv')
+                    features.append(f'rv_{i}')
+                    self.dfs_dict['1d'][f'rv{timeframe[:1]}_{i}'] = data[f'rv_{i}']
+                    self.feats_dict['1d']['Volatility'] += [f'rv{timeframe[:1]}_{i}']
 
         self.dfs_dict.update({timeframe: data})
         self.feats_dict[timeframe].update({'Volatility': features})
@@ -168,7 +189,7 @@ class MultiTfModel:
     def trend_indicators(self, timeframe, keep_existing_features=False,
                          SMAs=False, sma_lens=[20, 50, 200], KAMAs=False, kama_params=[(20, 2, 32)],
                          momentum=True, momentum_periods=[24],
-                         normalize_features=True):
+                         normalize_features=True, use_scaled_returns=False):
 
         if keep_existing_features:
             features = self.dfs_dict[timeframe]['Trend']
@@ -180,7 +201,11 @@ class MultiTfModel:
         if momentum:
             for i in momentum_periods:
                 data[f'momentum_{i}'] = np.log(data.Close) - np.log(data.Close.shift(i))
+                if use_scaled_returns:
+                    data['ann_vol'] = self.annualized_vol.ffill()
+                    data[f'momentum_{i}'] = data['momentum'] / self.annualized_vol
                 features.append(f'momentum_{i}')
+
         if SMAs:
             for i in sma_lens:
                 data[f'SMA_{i}'] = data.Close.rolling(i).mean()
@@ -204,85 +229,30 @@ class MultiTfModel:
 
         return
 
-    def train_HAR(self, scale_data=False, split_data=True, training_size=0.8,
-                  regularize=False, cv=3, save_best_only=True, target_horizon=1, add_feature=True):
+    def train_HAR(self, rv_tf, har_type='rv', scale_data=False, training_size=0.8,
+                  penalty=None, cv=3, alpha= 0.7, target_horizon=1, add_as_feature=True, tf='1d',
+                  ):
 
-        rvs = self.dfs_dict['1d'].filter(like='rv').dropna()
+        har = HAR(self.dfs_dict[rv_tf], horizon=target_horizon)
+        har.fit(penalty=penalty,
+                scale_data=scale_data,
+                model=har_type,
+                train_size=training_size,
+                alpha=alpha,
+                lasso_cv=cv )
 
-        if scale_data:
-            self.rv_scaler = StandardScaler()
-            rvs = pd.DataFrame(self.rv_scaler.fit_transform(rvs), columns=rvs.columns, index=rvs.index)
+        print(har.eval)
 
-        self.har_df = pd.DataFrame(
-            columns=pd.MultiIndex.from_product([[col[:-3] for col in rvs.columns], ['rv_d', 'rv_w', 'rv_m', 'rv_t']]),
-            index=rvs.index)
-
-        evals = {}
-        rmse = []
-        best_rmse = 1.5
-
-        for col in rvs.columns:
-            rv_d = rvs[col]
-            column = col[:-3]
-
-            self.har_df[column] = pd.DataFrame({'rv_d': rv_d.shift(0),
-                                                'rv_w': rv_d.shift(0).rolling(5).mean(),
-                                                'rv_m': rv_d.shift(0).rolling(22).mean(),
-                                                'rv_t': rv_d.shift(-target_horizon)}, index=rvs.index).dropna()
-            har_df = self.har_df[column].copy(deep=True)
-
-            df = har_df.ffill().dropna()
-            pred_idx = df.index
-
-            # split_ix = int(self.train_ratio * len(rvs))
-            # self.models_info.update({'test_idx': split_ix})
-            # train_x, test_x = df.iloc[:split_ix, :-1].to_numpy(), df.iloc[split_ix:, :-1].to_numpy()
-            # train_y, test_y = df.iloc[:split_ix, -1:].to_numpy(), df.iloc[split_ix:, -1:].to_numpy()
-            # regression = sm.OLS(train_y, train_x)
-
-            if regularize:
-                results = multivariate_regression(df, X_cols=['rv_d', 'rv_w', 'rv_m'], y_col='rv_t',
-                                                  penalty='cv', cv=cv, scaler=self.rv_scaler, train_split=split_data,
-                                                  train_size=training_size)
-
-            else:
-                results = multivariate_regression(df, X_cols=['rv_d', 'rv_w', 'rv_m'], y_col='rv_t',
-                                                  train_split=split_data, train_size=training_size,
-                                                  penalty=None)
-
-            df['predictions'] = results['model'].predict(df.drop('rv_t', axis=1))
-            pred_idx = df.predictions.dropna().index
+        self.vol_model = har
+        self.har_df = har.x_df
 
 
+        if add_as_feature:
+            self.dfs_dict[tf][f'HAR-{har_type}_preds'] =self.har_df.preds
+            if f'HAR-{har_type}_preds' not in self.feats_dict[tf]['Additional']:
+                self.feats_dict[tf]['Additional'].append(f'HAR-{har_type}_preds')
 
-            if save_best_only:
-                rmse = results['rmse']
-                if rmse < best_rmse:
-                    best_rmse = rmse
-                    best_score = column
-                else:
-                    del results['model']
-            else:
-                self.har_df[(column, 'predictions')] = np.nan
-                self.har_df.loc[pred_idx, (column, 'predictions')] = df['predictions']
-
-            evals.update({col:results})
-
-        if save_best_only:
-            self.har_df[(best_score, 'predictions')] = np.nan
-            self.har_df.loc[pred_idx, (best_score, 'predictions')] = df['predictions']
-
-            if add_feature:
-                self.dfs_dict['1d']['HAR_preds'] = np.nan
-                self.dfs_dict['1d'].loc[pred_idx, 'HAR_preds'] = df['predictions']
-                self.feats_dict['1d']['Additional'].append('HAR_preds')
-
-
-
-
-
-
-        return evals
+        return self.vol_model
 
     def transfer_feature(self, from_tf, to_tf, feature_name):
         x = self.dfs_dict[from_tf][feature_name]
@@ -291,30 +261,42 @@ class MultiTfModel:
         self.dfs_dict[to_tf] = y_df
         return y_df
 
-    def prepare_for_training(self, training_tf, target_horizon,
+    def prepare_for_training(self, training_tf, target_horizon, feature_types=['Volatility', 'Trend', 'Volume'],
                              vol_normalized_returns=True, normalize_lb=120, additional_tf=None, additional_features=[],
-                             train_size=0.8):
+                             train_size=0.8, target_vol=False):
 
         self.training_df = self.dfs_dict[training_tf]
         features = []
+        feats = self.feats_dict[training_tf]
 
         if vol_normalized_returns:
-            vol = calc_daily_vol(self.training_df.Close)
-            self.training_df['target_returns'] = calc_returns(self.training_df.Close, target_horizon) / vol
+            if not target_vol:
+                self.training_df['ann_vol'] = self.annualized_vol.ffill()
+                self.training_df['target_returns'] = calc_returns(self.training_df.Close,
+                                                                  target_horizon) / self.annualized_vol
+            else:
+                self.training_df['target_returns'] = historical_rv(self.dfs_dict[self.model_info['RV_freq']].returns,
+                                                                   window=target_horizon)
+
+        if target_vol:
+            self.training_df['target_returns'] = historical_rv(self.dfs_dict['5min'].returns,
+                                                               window=target_horizon).shift(-target_horizon)
+
         if additional_tf is not None:
-            feat_tf = self.dfs_dict[additional_tf]
+            extra_feats = self.dfs_dict[additional_tf]
 
             for i in additional_features:
                 self.training_df[f'{additional_tf}_{i}'] = np.nan
-                self.training_df[f'{additional_tf}_{i}'] = feat_tf[i]
+                self.training_df[f'{additional_tf}_{i}'] = extra_feats[i]
+                self.training_df[f'{additional_tf}_{i}'] = self.training_df[
+                    f'{additional_tf}_{i}'
+                ].ffill().dropna()
 
-            features.append(f'{additional_tf}_{i}')
+                features.append(f'{additional_tf}_{i}')
 
-        self.feats_dict[training_tf]['Additional'] += features
-        self.features = sum(self.feats_dict[training_tf].values(), [])
+        self.features = list(chain.from_iterable([feats[k] for k in feature_types])) + features
 
         self.training_df = self.training_df.ffill().dropna()
-        self.ml = ml(self.training_df, self.features, 'target_returns', train_test_size=train_size)
 
         return
 
@@ -331,18 +313,171 @@ class MultiTfModel:
                                     'vol': np.sqrt(np.sum(x.returns ** 2)),
                                     'range': (np.max(x.High) - np.min(x.Low)) / x.Close[0]}, index=[x.index.date]))
 
-    def train_model(self, method='xgbclf', params=None, high_percentile=85, low_percentile=20,
-                    save_file='save_eval.csv', plot=True):
-        if method == 'xgb':
-            self.model = self.ml.xgb_model(xgb_params, evaluate=True, eval_log=self.model_info['Dir'] + save_file,
-                                           plot_pred=plot)
-        if method == 'gbr':
-            self.model = self.ml.tree_model(gbr_params, gbr=True, evaluate=True,
-                                            eval_log=self.model_info['Dir'] + save_file,
-                                            plot_pred=plot)
-        if method == 'xgbclf':
-            self.model = self.ml.xgb_clf(high_p=high_percentile, low_p=low_percentile, parameter_dict=xgb_clf_params)
+    def train_model(self, method='xgbclf',train_size=0.8, params=None, high_percentile=85, low_percentile=20,
+                    save_file='save_eval.csv', plot=True, linear_cv=5, linear_alpha=0.8):
 
-        self.model_info['ML'].update({'Type': method, 'Hyperparams': params, 'Features': self.features})
+        if 'linear' in method:
+            if method == 'linear_l1':
+                scaler = StandardScaler()
+                res = multivariate_regression(self.training_df, X_cols=self.features, y_col='target_returns',
+                                                     cv=linear_cv, penalty='cv',scaler=scaler , train_split=True, train_size=train_size)
+            if 'l2' in method:
+                res = multivariate_regression(self.training_df, X_cols=self.features, y_col='target_returns',
+                                                     alpha=linear_alpha, penalty='l2', train_split=True, train_size=train_size)
+            else:
+                res = multivariate_regression(self.training_df, X_cols=self.features, y_col='target_returns',
+                                                     penalty=None, train_split=True, train_size=train_size)
+            self.model = res['model']
+            self.model_info['ML'].update({
+                'Type':method,
+                'Hyperparams':{'cv':linear_cv, 'alpha':linear_alpha},
+                'Features':self.features,
+                'Train_end':res['train_end_idx']
+            })
+            self.model_info['Eval'] = res
 
-        self.model_info.update({'Features': self.features})
+        else:
+            self.ml = ml(self.training_df, self.features, 'target_returns', train_test_size=train_size)
+            if method == 'xgb':
+                self.model = self.ml.xgb_model(xgb_params, evaluate=True, eval_log=self.model_info['Dir'] + save_file,
+                                               plot_pred=plot)
+            if method == 'gbr':
+                self.model = self.ml.tree_model(gbr_params, gbr=True, evaluate=True,
+                                                eval_log=self.model_info['Dir'] + save_file,
+                                                plot_pred=plot)
+            if method == 'xgbclf':
+                self.model = self.ml.xgb_clf(high_p=high_percentile, low_p=low_percentile, parameter_dict=xgb_clf_params)
+            if method == 'knn':
+                self.model = self.ml.neighbors_clf(1, 10, high_p=high_percentile, low_p=low_percentile)
+            if method == 'lgbclf':
+                self.model = self.ml.lgb_clf(lgb_clf_params, high_percentile=high_percentile, low_percentile=low_percentile, num_rounds=1000)
+
+            self.model_info['ML'].update({'Type': method, 'Hyperparams': params, 'Features': self.features, 'Train_end':len(self.ml.x_train)})
+            self.model_info['Eval'] = self.ml.eval
+
+        self.model_info.update()
+
+    def save_model(self, model_name):
+        model_dir = self.model_info['Dir'] + model_name + '\\'
+
+        if not os.path.isdir(model_dir):
+            os.mkdir(model_dir)
+
+        if self.ml.model is not None:
+            self.ml.save_model(file_name=model_name + '_model', save_fp=model_dir)
+        elif self.model is not None:
+            with open(model_dir+model_name+'_model', 'wb') as f:
+                pickle.dump(self.model, f)
+
+        else:
+            print('No Model Found')
+            return False
+
+        print('Model Saved to ' + model_dir)
+
+        model_params = prune_non_builtin(self.model_info)
+        model_features = prune_non_builtin(self.feats_dict)
+
+        with open(model_dir + 'model_params', 'w') as f:
+            f.write(str(model_params))
+        with open(model_dir + 'model_features', 'w') as f:
+            f.write(str(model_features))
+        with open(model_dir + 'dfs_dict.pkl', 'wb') as f:
+            pickle.dump(self.dfs_dict, f)
+
+
+        training_data = self.data.to_csv(model_dir + 'training_data.csv')
+
+        print('Model Data and parameters saved to ' + model_dir)
+        return True
+
+    def load_model(self, model_name):
+        model_dir = self.model_info['Dir'] + model_name + '\\'
+
+        if not os.path.isdir(model_dir):
+            print(f"Model directory '{model_dir}' not found.")
+            return False
+
+        # Load model file
+        model_file = os.path.join(model_dir, model_name + '_model')
+        if os.path.exists(model_file):
+            with open(model_file, 'rb') as f:
+                self.model = pickle.load(f)
+            print('Model loaded.')
+        else:
+            print('Model file not found.')
+            return False
+
+        # Load model parameters
+        params_path = os.path.join(model_dir, 'model_params')
+        with open(params_path, 'r') as f:
+            self.model_info = ast.literal_eval(f.read())
+
+        # Load model features
+        features_path = os.path.join(model_dir, 'model_features')
+        with open(features_path, 'r') as f:
+            self.feats_dict = ast.literal_eval(f.read())
+
+        # Load dictionary of DataFrames
+        dfs_path = os.path.join(model_dir, 'dfs_dict.pkl')
+        with open(dfs_path, 'rb') as f:
+            self.dfs_dict = pickle.load(f)
+
+        # Load training data if available
+        train_csv_path = os.path.join(model_dir, 'training_data.csv')
+        if os.path.exists(train_csv_path):
+            self.data = pd.read_csv(train_csv_path, index_col=0, parse_dates=True)
+        else:
+            self.data = None  # or pd.DataFrame()
+            print("Training data not found.")
+
+        print(f"Model and associated data loaded from '{model_dir}'")
+        return True
+
+class LoadedModel(MultiTfModel):
+
+    def __init__(self, model_dir, model_name):
+        model_dir = model_dir + model_name + '\\'
+        train_csv_path = os.path.join(model_dir, 'training_data.csv')
+        if os.path.exists(train_csv_path):
+            self.data = pd.read_csv(train_csv_path, index_col=0, parse_dates=True)
+        else:
+            self.data = None  # or pd.DataFrame()
+            print("Training data not found.")
+
+        if not os.path.isdir(model_dir):
+            print(f"Model directory '{model_dir}' not found.")
+            return
+
+            # Load model file
+        model_file = os.path.join(model_dir, model_name + '_model.pkl')
+        if os.path.exists(model_file):
+            with open(model_file, 'rb') as f:
+                self.model = pickle.load(f)
+            print('Model loaded.')
+        else:
+            print('Model file not found.')
+            super().__init__(self.data, project_dir=model_dir)
+
+        # Load model parameters
+        params_path = os.path.join(model_dir, 'model_params')
+        with open(params_path, 'r') as f:
+            self.model_info = ast.literal_eval(f.read())
+
+        # Load model features
+        features_path = os.path.join(model_dir, 'model_features')
+        with open(features_path, 'r') as f:
+            self.feats_dict = ast.literal_eval(f.read())
+
+        # Load dictionary of DataFrames
+        dfs_path = os.path.join(model_dir, 'dfs_dict.pkl')
+        with open(dfs_path, 'rb') as f:
+            self.dfs_dict = pickle.load(f)
+
+        # Load training data if available
+
+
+        print(f"Model and associated data loaded from '{model_dir}'")
+
+        return
+

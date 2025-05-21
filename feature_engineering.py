@@ -15,13 +15,41 @@ VOL_TARGET = 0.15
 
 range_t = lambda x: (x.High.max(), x.Low.min())
 
-
 def convert_to_time(time_strings):
     return [dt.datetime.strptime(t, "%H:%M").time() for t in time_strings]
 
 def log_returns(data: pd.Series, lb=1):
     return np.log(data) -  np.log(data.shift(lb))
 
+def ohlc_rs_dict(
+    include_bid_ask: bool = False,
+    bid_col: str = "BidVolume",
+    ask_col: str = "AskVolume"
+) -> dict:
+    """
+    Returns a dictionary defining OHLC resample logic, with optional bid/ask volume.
+
+    Parameters:
+    - include_bid_ask (bool): Whether to include bid and ask volume in the resample logic.
+    - bid_col (str): Column name for bid volume (default: "BidVolume").
+    - ask_col (str): Column name for ask volume (default: "AskVolume").
+
+    Returns:
+    - dict: Aggregation logic suitable for DataFrame.resample(...).agg(...)
+    """
+    agg = {
+        "Open": "first",
+        "High": "max",
+        "Low": "min",
+        "Close": "last",
+        "Volume": "sum"
+    }
+
+    if include_bid_ask:
+        agg[bid_col] = "sum"
+        agg[ask_col] = "sum"
+
+    return agg
 
 def ts_train_test_split(df, test_size=0.2, groups=None):
     """
@@ -250,6 +278,38 @@ def create_labels(prices, future_horizon=1, threshold=0.01):
 
     return pd.Series(labels, index=prices.index)
 
+def realized_vol(returns, window=21):
+
+    vol = returns.groupby(returns.index.date).apply(lambda x: np.sqrt(np.sum(x ** 2)))
+
+    return vol
+
+def historical_rv(returns, window=21,average=True, annualize=False):
+
+    dr = pd.bdate_range(returns.index.date[0], returns.index.date[-1])
+    rv = np.zeros(len(dr))
+    rv[:] = np.nan
+    if average: denom = window
+    else: denom = 1
+
+    for idx in range(window, len(dr)):
+        d_start = dr[idx - window]
+        d_end = dr[idx]
+        rv[idx] = np.sqrt(np.sum(returns.loc[d_start:d_end] ** 2))/denom
+
+
+    if annualize:
+        rv *= np.sqrt(252)
+
+
+    hrv = pd.Series(data=rv,
+                    index=dr,
+                    name=f'{window}_rv')
+
+
+    return hrv
+
+
 
 def calc_returns(price_series, day_offset=1):
     returns = price_series / price_series.shift(day_offset) - 1.0
@@ -279,9 +339,8 @@ def high_lows(data, hl_lens=[5, 20, 50], normalize_features=True):
     return data[features]
 
 
-def vol_scaled_returns(returns, daily_vol=pd.Series(None)):
-    if not len(daily_vol):
-        daily_vol = calc_daily_vol(returns)
+def vol_scaled_returns(returns, daily_vol_lb=22):
+    daily_vol = calc_daily_vol(returns, daily_vol_lb)
     annualized_vol = daily_vol * np.sqrt(252)
 
     return returns * VOL_TARGET / annualized_vol.shift(1)
