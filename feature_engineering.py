@@ -13,7 +13,17 @@ import datetime as dt
 VOL_LOOKBACK = 60
 VOL_TARGET = 0.15
 
+cumulative_rets = lambda x: (1+ x).cumsum().apply(np.exp)
 range_t = lambda x: (x.High.max(), x.Low.min())
+
+def cum_rets_by_clf(df, returns_col='returns', clf_col='regime', reset_index=False):
+    cumulative_returns = df.groupby(clf_col)[returns_col].apply(cumulative_rets)
+    if reset_index:
+        cumulative_returns = cumulative_returns.reset_index()
+        cumulative_returns['t'] = cumulative_returns.groupby(clf_col).cumcount()
+        cumulative_returns = cumulative_returns.pivot(index='t', columns='cluster', values='returns')
+
+    return cumulative_returns
 
 def convert_to_time(time_strings):
     return [dt.datetime.strptime(t, "%H:%M").time() for t in time_strings]
@@ -178,10 +188,6 @@ def reshape_multiindex(df, group_id_column='Ticker', group_name_column='Tickers'
     result_df = result_df.set_index(['Original_Index', group_id_column])
     return result_df
 
-
-import pandas as pd
-import numpy as np
-
 def normalize_hls(close, highs, lows, normalize_lb=120):
     df = pd.DataFrame({'width':(highs-lows)/(highs-lows).rolling(normalize_lb),
                        'high': (highs - close)/close,
@@ -295,6 +301,8 @@ def historical_rv(returns, window=21,average=True, annualize=False):
     for idx in range(window, len(dr)):
         d_start = dr[idx - window]
         d_end = dr[idx]
+
+
         rv[idx] = np.sqrt(np.sum(returns.loc[d_start:d_end] ** 2))/denom
 
 
@@ -498,32 +506,28 @@ def get_range(data, start_time:dt.time, end_time:dt.time):
     hls = filtered_data.groupby(filtered_data.index.date).apply(range_t)
     df = pd.DataFrame({'Highs': [hl[0] for hl in hls],
                        'Lows': [hl[1] for hl in hls]
-                       }, index=filtered_data.loc[end_time].index)
+                       }, index=pd.to_datetime(hls.index) + dt.timedelta(hours=end_time.hour, minutes=end_time.minute))
 
     return df
 
-def rsv(returns: pd.Series) -> pd.DataFrame:
-    """
-    Calculate daily realized semivariance from high-frequency returns.
+def rsv(returns: pd.Series, window=1, average=True) -> pd.DataFrame:
 
-    Parameters:
-    -----------
-    returns : pd.Series
-        A datetime-indexed series of high-frequency returns.
-
-    Returns:
-    --------
-    pd.DataFrame
-        A DataFrame indexed by date with columns 'RS_neg' and 'RS_pos'.
-    """
     data = []
-    for date, group in returns.groupby(returns.index.date):
-        rs_neg = np.sum((group[group < 0])**2)
-        rs_pos = np.sum((group[group > 0])**2)
-        data.append((pd.to_datetime(date), rs_neg, rs_pos))
+    dr = pd.bdate_range(returns.index.date[0], returns.index.date[-1])
+    denom = 1
+    if average:
+        denom = window
+
+    for idx in range(window, len(dr)):
+        start =  dr[idx - window]
+        end = dr[idx]
+        rets = returns.loc[start:end]
+        rs_neg = np.sqrt((rets[rets < 0 ].sum() ** 2))/denom
+        rs_pos = np.sqrt((rets[rets > 0].sum() ** 2))/denom
+        data.append((end, rs_pos, rs_neg))
 
     # Create a DataFrame from collected rows
-    rs_df = pd.DataFrame(data, columns=['date', 'RS_neg', 'RS_pos'])
+    rs_df = pd.DataFrame(data, columns=['date', 'RS_pos', 'RS_neg'])
     rs_df.set_index('date', inplace=True)
     return rs_df
 
