@@ -1,9 +1,0 @@
-eval_datetime,r2_score,mse,rmse,rmse/sd,mape,sorted_features,features
-2025-03-03 08:33:34.840146,[-0.33385686935042314],[0.004276325882802494],[0.065393622646268],[1.1549272138755857],[18406.04483781386],True,"[array(['Volume', 'seasonal_0', 'rvol_3', 'resid', 'bb_upper_x',
-       'bb_lower_x', 'seasonal_2', 'bb_ma_x', 'seasonal_1', 'Volume_5_x'],
-      dtype='<U10')]"
-2025-03-03 08:34:53.508947,[-0.33385686935042314],[0.004276325882802494],[0.065393622646268],[1.1549272138755857],[18406.04483781386],True,"[array(['Volume', 'seasonal_0', 'rvol_3', 'resid', 'bb_upper_x',
-       'bb_lower_x', 'seasonal_2', 'bb_ma_x', 'seasonal_1', 'Volume_5_x'],
-      dtype='<U10')]"
-2025-03-03 08:36:25.013210,[-0.10287262106201189],[0.02097658239341864],[0.14483294650533987],[1.0501774236108925],[16991.816011004434],True,"[array(['seasonal_0', 'resid', 'bb_upper_x', 'bb_ma_x', 'seasonal_1',
-       'seasonal_2', 'bb_lower_x'], dtype='<U10')]"
