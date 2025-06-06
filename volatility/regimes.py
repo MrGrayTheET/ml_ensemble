@@ -6,8 +6,8 @@ from sklearn.decomposition import PCA
 from sklearn.mixture import GaussianMixture as gmm
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.preprocessing import StandardScaler
-from WKMeans.src.WKMean import WKMeans
-from WKMeans.src.WKUtils import window_lift, reconstruct
+from .WKMeans.src.WKMean import WKMeans
+from .WKMeans.src.WKUtils import window_lift, reconstruct
 
 
 def sort_clusters(clusters_df: pd.DataFrame, close_data: pd.Series):
@@ -29,8 +29,8 @@ def cum_rets(df, return_col='returns', regime_col='cluster', start_idx=1, reset_
     return cumulative_returns
 
 
-def plot_by_regime(df, return_col='returns', regime_col='cluster', start=1):
-    cum_ret = cum_rets(df, return_col, regime_col, start, reset_index=True)
+def plot_by_regime(df, return_col='returns', regimes_col='cluster', start=1):
+    cum_ret = cum_rets(df, return_col, regimes_col, start, reset_index=True)
 
     for regime in cum_ret.columns:
         plt.plot(cum_ret.index, cum_ret[regime], label=f'Cluster {regime}')

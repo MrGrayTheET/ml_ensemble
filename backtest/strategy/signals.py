@@ -1,4 +1,3 @@
-
 import pandas as pd
 import numpy as np
 
@@ -9,6 +8,8 @@ class SignalGen:
         self.data = data
         self.ATR = data['ATR']
         self.signal_map = {}
+
+
 
     def crossover(self, fast_col, slow_col, signal_name='crossover', stop_col=None, stop_type='crossover', map=False, map_id=None):
         data = self.data
@@ -112,7 +113,6 @@ class SignalGen:
         data.loc[(signal == -1) & (close > high_stop), signal_col ] = 0
 
         return
-
 
 
 

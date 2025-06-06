@@ -1,0 +1,65 @@
+[inititalization]
+intraday_tfs = ['4h']
+HAR = false
+cluster = true
+
+
+[cluster]
+method = 'wkmeans'
+k = 3
+features = []
+max_iter = 20
+tol = 1e-5
+gamma = 5.0
+mmd_pair = 7
+
+[types]
+Volatility = true
+Trend = true
+Volume = true
+Additional = false
+
+[Volatility]
+ATR = true
+ATR_length = 42
+hawkes = true
+hawkes_mean = 60
+kappa = 0.1
+hawkes_signal_lb=21
+normalize_range_len = 10
+hawkes_binary_signal = true
+hl_range = true
+range_lengths = [10, 50]
+lagged_vol = false
+vol_lags = [5]
+lagged_semivariance=false
+sv_lags = [1, 5]
+
+[Volume]
+relative_volume = true
+rvol_days = 10
+delta = false
+delta_as_pct = true
+VSA = true
+vsa_cols = ['AskVolume', 'BidVolume']
+vsa_lb = 30
+normalize_vol = false
+
+[Trend]
+SMAs = false
+KAMAs = true
+kama_params = [10,2,28, 20,2,32, 50, 2,32]
+sma_lens = [50, 200]
+momentum = true
+momentum_periods = [21, 63, 96]
+use_scaled_returns = false
+
+[Additional]
+cols = ["cluster"]
+
+[Training]
+vol_normalized_returns = false
+vol_lb = 63
+target_horizon = 1
+
+

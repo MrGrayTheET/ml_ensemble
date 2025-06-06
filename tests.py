@@ -10,6 +10,21 @@ from scipy.stats import zscore
 from statsmodels.tsa.stattools import acf, pacf
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 
+def nan_fraction_exceeds(df, axis=0, threshold=0.4):
+    """
+    Returns a boolean Series indicating which rows/columns exceed the threshold of NaNs.
+
+    Parameters:
+        df (pd.DataFrame): The DataFrame to check.
+        axis (int): 0 for columns, 1 for rows.
+        threshold (float): Proportion of NaNs to exceed (default = 0.4)
+
+    Returns:
+        pd.Series: Boolean Series — True where NaN fraction exceeds threshold.
+    """
+    nan_ratio = df.isna().mean(axis=axis)
+    return nan_ratio > threshold
+
 def adf_test(timeseries):
     print("Results of Dickey-Fuller Test:")
     dftest = adf(timeseries, autolag="AIC")

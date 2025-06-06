@@ -11,7 +11,7 @@ from feature_engineering import (vsa, vol_signal, vol_scaled_returns,
 from ml_build.ml_model import ml_model as ml, xgb_params,lgb_clf_params, gbr_params, rfr_params, xgb_clf_params
 from ml_build.utils import prune_non_builtin
 from linear_models import multivariate_regression
-from vol_models import HAR
+from volatility.AR import HAR
 from itertools import chain
 import yfinance as yf
 import datetime as dt

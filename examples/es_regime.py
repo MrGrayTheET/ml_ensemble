@@ -1,5 +1,5 @@
 from technical_prep import FeaturePrep as MTM
-from models.volatility.regimes import GaussianMixture as gm, AggClusters as agg, sort_clusters
+from volatility.regimes import GaussianMixture as gm, AggClusters as agg, sort_clusters
 from backtest.strategy.signals import SignalGen as sg
 from backtest.strategy_test import RegimeBacktester as RBT
 import pandas as pd
@@ -50,7 +50,7 @@ cluster_model.visualize_returns()
 ##cluster_model.features_df.to_parquet('es_f_cluster_2.parquet')
 #
 # signals = MTM(ticker, intraday_tfs=tfs, vol_scale=False)
-# signals.daily_vol = signals.dfs_dict['1d'].Close.ewm(span=60).std()
+# signals.ann_vol = signals.dfs_dict['1d'].Close.ewm(span=60).std()
 # signals.trend_indicators('1d', SMAs=False, KAMAs=True, kama_params=[(21, 2,30), (10,2,30), (5,2,30)], momentum=True, momentum_periods=[21,63], normalize_features=False)
 # signals.volatility_signals('1d', ATR=True, ATR_length=8, normalize_atr=False, hawkes=True, hawkes_mean=63, kappa=0.1, hawkes_binary_signal=True, hawkes_signal_lb=21, normalize=False, hl_range=True, range_lengths=[5, 20, 50], lagged_vol=False)
 # signals.prepare_for_training(training_tf='1d', target_horizon=6, feature_types=['Additional', 'Trend', 'Volatility'])

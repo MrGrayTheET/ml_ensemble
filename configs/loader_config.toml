@@ -1,0 +1,44 @@
+[paths]
+unformatted = "F:\\charts\\"
+unformatted_tick = "F:\\charts\\tick\\"
+formatted = "F:\\charts\\formatted\\"
+intraday = "F:\\charts\\formatted\\tick\\"
+
+[yf_tickers]
+GC_F = "GC=F"
+ES_F = "ES=F"
+NG_F = "NG=F"
+
+[resampler]
+file_name_format = "_"
+
+[baskets]
+Energy = [ "NG_F", "CL_F",]
+Financials = [ "ES_F", "ZB_F",]
+Agriculturals = [ "LE_F",]
+PMs = [ "GC_F",]
+Agris = [ "LE_F", "ZC_F",]
+
+[aliases.unformatted]
+GC_F = "GC_F.csv"
+ES_F = "es_25.csv"
+NG_F = "ng_25.csv"
+CL_F = "cl_25.csv"
+ZB_F = "zb_25.csv"
+LE_F = "le_25.csv"
+
+[aliases.formatted]
+GC_F = "GC_F.parquet"
+ES_F = "ES_F.parquet"
+NG_F = "NG_F_5min"
+CL_F = "CL_F.parquet"
+ZB_F = "ZB_F_5min"
+LE_F = "LE_F_5min"
+VX_F = "VX_F.parquet"
+
+[aliases.intraday]
+CL_F = "cl_f_2s"
+GC_F = "GC_F.csv"
+LE_F = "LE_F.csv"
+ZC_F = "ZC_F.csv.txt"
+NG_F = "NG_F.csv"

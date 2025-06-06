@@ -6,7 +6,6 @@ from matplotlib import pyplot as plt
 from pandas import DataFrame
 from scipy.signal import find_peaks
 from scipy.stats import linregress
-from filters import wwma
 import datetime as dt
 
 
@@ -354,7 +353,7 @@ def vol_scaled_returns(returns, daily_vol_lb=22):
     return returns * VOL_TARGET / annualized_vol.shift(1)
 
 
-def extract_time_features(data, month=True, day=False, dayofweek=False, year=False):
+def extract_time_features(data,set_index=False,hour=False, month=True, day=False, dayofweek=False, year=False):
     df = data.copy(deep=True)
 
     if month:
@@ -365,6 +364,10 @@ def extract_time_features(data, month=True, day=False, dayofweek=False, year=Fal
         df['weekday'] = df.index.dayofweek
     if year:
         df['year'] = df.index.year
+    if hour:
+        df['hour'] = df.index.hour
+    if set_index:
+        df.index = np.arange(len(df))
 
     return df
 

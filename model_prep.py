@@ -71,10 +71,10 @@ class TrendModel:
         if self.mdex:
             self.cols = lambda col: [(col, ticker) for ticker in self.data['Close'].columns]
             self.data[[('returns', i) for i in self.data.Close.columns]] = calc_returns(self.data.Close)
-            self.data[[('daily_vol', i) for i in self.data.Close.columns]] = calc_daily_vol(self.data.returns)
+            self.data[[('ann_vol', i) for i in self.data.Close.columns]] = calc_daily_vol(self.data.returns)
         else:
             self.data['returns'] = calc_returns(self.data.Close)
-            self.data['daily_vol'] = calc_daily_vol(self.data.returns)
+            self.data['ann_vol'] = calc_daily_vol(self.data.returns)
 
         return
 
@@ -104,10 +104,10 @@ class TrendModel:
         if self.model_info['Scaling']['Vol']:
             if self.mdex:
                 self.data[self.cols('target_returns')] = vol_scaled_returns(calc_returns(self.data.Close, offset),
-                                                                            self.data.daily_vol).shift(-1)
+                                                                            self.data.ann_vol).shift(-1)
             else:
                 self.data['target_returns'] = vol_scaled_returns(calc_returns(self.data.Close, offset),
-                                                                 self.data.daily_vol).shift(-1)
+                                                                 self.data.ann_vol).shift(-1)
         else:
             self.data['target_returns'] = calc_returns(self.data.Close, offset)
 
@@ -370,7 +370,7 @@ class TrendModel:
 
     def normalized_returns(self, offset):
         return (
-                (calc_returns(self.data['Close'], offset) / self.data.daily_vol)
+                (calc_returns(self.data['Close'], offset) / self.data.ann_vol)
                 / np.sqrt(offset)
         )
 

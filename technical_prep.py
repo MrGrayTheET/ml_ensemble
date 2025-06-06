@@ -10,7 +10,8 @@ from feature_engineering import (vsa, vol_signal, vol_scaled_returns,
 from ml_build.ml_model import ml_model as ml, xgb_params, lgb_clf_params, gbr_params, rfr_params, xgb_clf_params
 from ml_build.utils import prune_non_builtin
 from linear_models import multivariate_regression
-from models.volatility.AR import HAR
+from tests import  nan_fraction_exceeds
+from volatility.AR import HAR
 from itertools import chain
 import yfinance as yf
 import datetime as dt
@@ -52,35 +53,51 @@ class FeaturePrep:
 
         self.dfs_dict['1d']['scaled_returns'] = vol_scaled_returns(self.dfs_dict['1d'].returns, vs_lb)
         vol = calc_daily_vol(self.dfs_dict['1d'].returns, vs_lb).ffill()
-        self.daily_vol = vol * np.sqrt(252)
+        self.ann_vol = vol * np.sqrt(252)
 
         for i in intraday_tfs + ['1d']:
             if i in ['1h', '4h', '2h']:
                 rs_params = {'rule':i, 'offset':rs_offset_hourly}
-            else:
-                rs_params = {'rule':i}
+                vol_lb = 24 / int(i[0]) * vs_lb
 
-            self.dfs_dict.update({i: data.resample(**rs_params).apply(resample_dict).ffill().dropna()})
-            self.dfs_dict[i]['returns'] = log_returns(self.dfs_dict[i].Close)
+            if i in ['5min', '10min', '30min']:
+                rs_params = {'rule':i}
+                vol_lb = (60 / int(i[0])) * 24 * vs_lb
+
+            else:
+                rs_params = {'rule':i, 'offset':rs_offset_daily}
+                vol_lb = vs_lb
+
+            self.dfs_dict[i] = self.data.resample(**rs_params).apply(resample_dict)
+            self.dfs_dict[i]['log_returns'] = log_returns(self.dfs_dict[i].Close)
+            self.dfs_dict[i]['vol'] = calc_daily_vol(self.dfs_dict[i]['log_returns'], vol_lb)
+            self.dfs_dict[i].dropna(inplace=True)
 
             if isinstance(self.dfs_dict[i].index, pd.DatetimeIndex): pass
+
             else:self.dfs_dict[i].index = pd.to_datetime(self.dfs_dict[i].index)
 
 
             #if vol_scale:
-            #    self.dfs_dict[i]['scaled_returns'] = self.dfs_dict[i]['returns'] * VOL_TARGET / self.daily_vol
+            #    self.dfs_dict[i]['scaled_returns'] = self.dfs_dict[i]['returns'] * VOL_TARGET / self.ann_vol
 
             self.feats_dict.update({i: {'Volatility': [], 'Volume': [], 'Trend': [], 'Temporal': [], 'Additional': []}})
 
-        self.models_dict = {'daily_vol': None, 'trend': None, 'reversal': None}
+        self.models_dict = {'ann_vol': None, 'trend': None, 'reversal': None}
 
         return
 
     def volatility_signals(self, timeframe, ATR=False, ATR_length=14, normalize_atr=True,
                            hawkes=False, hawkes_mean=168, kappa=0.1, hawkes_signal_lb=21, hawkes_binary_signal=True,
-                           normalize=True, hl_range=False, range_lengths=[20], normalize_range_len=63,
-                           lagged_vol=True, vol_lags=[1], lagged_semivariance=False, sv_lags=[1, 5], average_lags=True,
+                           normalize=True, hl_range=False, range_lengths=None, normalize_range_len=10,
+                           lagged_vol=True, vol_lags=None, lagged_semivariance=False, sv_lags=None, average_lags=True,
                            keep_existing_features=False):
+        if range_lengths is None:
+            range_lengths = [20]
+        if sv_lags is None:
+            sv_lags = [1, 5]
+        if vol_lags is None:
+            vol_lags = [1]
         if keep_existing_features:
             features = self.feats_dict[timeframe]['Volatility']
         else:
@@ -104,18 +121,23 @@ class FeaturePrep:
                 features.append('hp')
 
         if hl_range:
-            for length in range_lengths:
-                highs = data.High.rolling(length).max()
-                lows = data.Low.rolling(length).max()
+            normalizer_SMA = data.Close.rolling(normalize_range_len, min_periods=1).mean()
+            for len_ in range_lengths:
+                hl_data = data[['High', 'Low']].dropna()
+                data[f'{len_}_highs'] = data.High.rolling(len_, min_periods=1).max()
+                data[f'{len_}_lows'] = data.Low.rolling(len_, min_periods=1).min()
+                data[f'{len_}_width'] = data[f'{len_}_highs']  - data[f'{len_}_lows']
+
                 if normalize:
-                    data[f'{length}_range'] = (highs - lows) / (highs - lows).rolling(normalize_range_len).mean()
-                    data[f'{length}_high_x'] = (highs - data.Close) / data.Close.rolling(normalize_range_len).mean()
-                    data[f'{length}_low_x'] = (data.Close - lows) / data.Close.rolling(normalize_range_len).mean()
-                    features += [f'{length}_{i}' for i in ['range', 'high_x', 'low_x']]
+                    hl_feats = [f'{len_}_{i}' for i in ['range_x', 'high_x', 'low_x']]
+                    data[hl_feats] = np.full((len(data.index), len(hl_feats)), np.nan)
+                    data.loc[:, f'{len_}_range_x'] = data[f'{len_}_width']/data['Close']
+                    data.loc[:, f'{len_}_high_x'] = (data[f'{len_}_highs'] - data['Close'])/ data['Close']
+                    data.loc[:, f'{len_}_low_x'] = (data['Close'] - data[f'{len_}_lows']) / data['Close']
+                    features += [f'{len_}_{i}' for i in ['range_x', 'high_x', 'low_x']]
+
                 else:
-                    data[f'{length}_high'] = highs
-                    data[f'{length}_low'] = lows
-                    features += [f'{length}_{i}' for i in ['high', 'low']]
+                    features += [f'{len_}_{i}' for i in ['high', 'low']]
 
         if lagged_vol:
             for i in vol_lags:
@@ -132,13 +154,13 @@ class FeaturePrep:
                 features += [f'pos_rsv_{i}', f'neg_rsv_{i}']
                 self.feats_dict['1d']['Volatility'] += [f'pos_rsv{timeframe[:1]}_{i}', f'neg_rsv{timeframe[:1]}_{i}']
 
-        self.dfs_dict.update({timeframe: data})
+        self.dfs_dict.update({timeframe: data.ffill()})
         self.feats_dict[timeframe].update({'Volatility': features})
 
         return self.dfs_dict[timeframe][features]
 
     def volume_features(self, timeframe, relative_volume=True, rvol_days=10, cum_rvol=True, delta=False,
-                        delta_as_pct=True, VSA=False, vsa_col='Volume', vsa_lb=30,
+                        delta_as_pct=True, VSA=False, vsa_cols=['Volume'], vsa_lb=30,
                         hawkes_vol=False, normalize_vol=False, normalizer_len=30, keep_existing_features=False):
         if keep_existing_features:
             features = self.feats_dict[timeframe]['Volume']
@@ -158,11 +180,13 @@ class FeaturePrep:
                 data['delta'] = delta_ / data.Volume
             else:
                 data['delta'] = delta_
+
             features.append('delta')
 
         if VSA:
-            data['VSA'] = vsa(data, vsa_col, vsa_lb)
-            features.append('VSA')
+            for vsa_col in vsa_cols:
+                data[f'{vsa_col[:3]}_vsa'] = vsa(data, vsa_col, vsa_lb)
+                features.append(f'{vsa_col[:3]}_vsa')
 
         if normalize_vol:
             median = data.Volume.rolling(normalizer_len).median()
@@ -258,8 +282,7 @@ class FeaturePrep:
             for i in momentum_periods:
                 data[f'momentum_{i}'] = np.log(data.Close) - np.log(data.Close.shift(i))
                 if use_scaled_returns:
-                    data['ann_vol'] = self.daily_vol.ffill()
-                    data[f'momentum_{i}'] = data[f'momentum_{i}'] * VOL_TARGET / self.daily_vol
+                    data[f'momentum_{i}'] = data[f'momentum_{i}'] * VOL_TARGET / data['vol']
                 features.append(f'momentum_{i}')
 
         if SMAs:
@@ -339,36 +362,46 @@ class FeaturePrep:
         return self.dfs_dict[to_tf][new_names]
 
     def prepare_for_training(self, training_tf, target_horizon, feature_types=['Volatility', 'Trend', 'Volume'],
-                             vol_normalized_returns=True, vol_lb=63, additional_tf=None, additional_features=None,
+                             vol_normalized_returns=False, vol_lb=63, additional_tf=None, additional_features=None,
                              target_vol=False):
 
-        self.training_df = self.dfs_dict[training_tf]
-        features = []
+        self.training_df = self.dfs_dict[training_tf].copy()
         feats = self.feats_dict[training_tf]
+        target_returns = np.log(self.training_df.Close.shift(-target_horizon)) - np.log(self.training_df.Close)
 
         if not vol_normalized_returns:
-
             if target_vol:
                 self.training_df['target_returns'] = historical_rv(self.dfs_dict['5min'].returns,
                                                                    window=target_horizon).shift(-target_horizon)
-            else:
-                self.training_df['target_returns'] = np.log(self.training_df.Close.shift(-target_horizon)) - np.log(
-                    self.training_df.Close)
+        else:
+            self.training_df['ann_vol'] = self.training_df.returns.ewm(span=vol_lb).std() * np.sqrt(252)
+            target_returns = target_returns * VOL_TARGET / self.training_df.vol
 
-
-        if vol_normalized_returns:
-            self.training_df['daily_vol'] = self.dfs_dict[training_tf].returns.ewm(span=vol_lb).std() * np.sqrt(252)
-            self.training_df['target_returns'] = self.training_df.target_returns * VOL_TARGET / self.training_df.vo
-
+        self.training_df.insert(0, 'target_returns', target_returns)
 
         if additional_tf is not None:
             self.transfer_features(from_tf=additional_tf, to_tf=training_tf, feature_names=additional_features)
 
-        self.features = list(chain.from_iterable([feats[k] for k in feature_types]))
-        self.training_df = self.training_df.ffill().drop_duplicates().dropna()
+        rows_to_drop = nan_fraction_exceeds(self.training_df, axis=1, threshold =0.5)
+        self.training_df = self.training_df[~rows_to_drop]
+
+        cols_to_drop = nan_fraction_exceeds(self.dfs_dict[training_tf], axis=0, threshold=0.9)
+
+        if 'target_returns' in cols_to_drop:
+            print('More than 40% of the target column is missing, check inputs')
+            raise ValueError
+
+        drop_cols = cols_to_drop[cols_to_drop].index.tolist()
+
+        print(f"Columns {drop_cols} have a high amount of nans, dropping before .dropna()")
 
 
-        return
+        self.training_df = self.training_df.drop(columns=drop_cols, axis=1)
+        features = list(chain.from_iterable([feats[k] for k in feature_types]))
+        self.features = [f for f in features if f not in cols_to_drop]
+        self.training_df = self.training_df.dropna()
+
+        return self.training_df
 
     def train_model(self, method='xgbclf', train_size=0.8, params=None, high_percentile=85, low_percentile=20,
                     save_file='save_eval.csv', plot=True, linear_cv=5, linear_alpha=0.8):
