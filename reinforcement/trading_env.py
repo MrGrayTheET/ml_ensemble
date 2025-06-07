@@ -322,11 +322,3 @@ class TradingEnvironment(gym.Env):
         self.simulator.reset()
         return self.data_source.take_step()[0]
 
-from agent import DQNAgent, train
-
-t_env = TradingEnvironment(1250,data_source='sc', ticker='ES_F')
-
-t_agent = DQNAgent(state_dim=t_env.reset().shape[0], action_dim=t_env.action_space.n)
-
-train(t_env, t_agent, 10)
-
