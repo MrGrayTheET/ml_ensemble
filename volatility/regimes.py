@@ -459,7 +459,7 @@ class AggClusters:
 
 class WKFi(WKMeans):
 
-    def __init__(self, OHLC_data: pd.DataFrame, k: int, max_iter=50, tol=1e-4, gamma=1.0, mmd_pairs=10, sample_size=50):
+    def __init__(self, OHLC_data: pd.DataFrame, k: int, max_iter=50, tol=1e-4, gamma=1.0, mmd_pairs=10, sample_size=50, h1= 30, h2=3):
         self.idxs = None
         self.data = OHLC_data.copy(deep=True).dropna()
         self.data['returns'] = (np.log(self.data.Close) - np.log(self.data.Close.shift(1))).dropna()
@@ -467,13 +467,19 @@ class WKFi(WKMeans):
         self.distributions = None
         self.split = False
         self.data.dropna(inplace=True)
+        self.h1 = h1
+        self.h2 = h2
         return
 
-    def fit_windows(self, h1=30, h2=3, data=None, split=False, training_length=0.8):
+    def fit_windows(self, h1=None, h2=None, data=None, split=False, training_length=0.8):
         self.split = split
         if data is not None:
             self.data = data
             self.data['returns'] = np.log(self.data.Close) - np.log(self.data.Close.shift(1))
+        if h1 is None:
+            h1 = self.h1
+            h2 = self.h2
+        else: self.h1, self.h2 = h1, h2
         self.distributions, self.idxs = window_lift(self.data.returns, h1, h2)
         self.fit(self.distributions)
         return self
