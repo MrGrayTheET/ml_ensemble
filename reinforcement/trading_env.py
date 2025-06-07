@@ -38,6 +38,7 @@ from gym.utils import seeding
 from technical_prep import FeaturePrep
 from sklearn.preprocessing import StandardScaler
 from feature_engineering import extract_time_features
+from volatility.regimes import WKFi
 from sc_loader import sierra_charts as sch
 
 logging.basicConfig()
@@ -122,13 +123,21 @@ class DataSource:
 
             pre_model.trend_indicators(timeframe=self.tf, normalize_features=self.normalize, **feature_params['Trend'])
 
+        if feature_params['cluster']['use_cluster']:
+            if feature_params['Cluster']['method'] == 'wkmeans':
+                model = WKFi(pre_model.dfs_dict[self.tf].copy(), **feature_params['cluster']['wkmeans'])
+                model.fit_windows()
+                df = model.predict_clusters()
+                pre_model.dfs_dict[self.tf]['cluster'] = df['cluster']
+                self.additional_features += ['cluster']
+
         training_types = [key for key, v in feature_params['types'].items() if v]
+        pre_model.features['Additional'] += self.additional_features
 
         pre_model.prepare_for_training(self.tf, feature_types=training_types, **feature_params['Training'])
-        pre_model.features += self.additional_features
         cols = ['target_returns'] + pre_model.features
 
-        self.data = pre_model.training_df[cols]
+        self.data = pre_model.training_df[cols].dropna()
         self.data = pd.DataFrame(data=self.scaler.fit_transform(self.data), columns=cols)
 
         if isinstance(self.data.index, pd.DatetimeIndex):

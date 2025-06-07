@@ -8,6 +8,7 @@ from tf_keras.models import Sequential,load_model, clone_model
 from tf_keras.layers import Dense, InputLayer
 from tf_keras.optimizers import Adam
 
+
 def huber_loss(y_true, y_pred, clip_delta=1.0):
     """Huber's loss - Custom Loss Function for Q Learning
 
@@ -81,7 +82,7 @@ class DQNAgent:
                 target += self.gamma * np.max(next_qs[i])
             target_qs[i][actions[i]] = target
 
-        self.model.fit(states, target_qs, epochs=1, verbose=0)
+        self.model.fit(states, target_qs, epochs=1, verbose=0, use_multiprocessing=)
 
         self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
 
