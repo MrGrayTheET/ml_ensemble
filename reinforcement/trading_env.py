@@ -48,8 +48,8 @@ log.setLevel(logging.INFO)
 log.info('%s logger started.', __name__)
 
 if sys.platform != 'win32':
-    SC_CFG_FP = '/content/ml_ensembles/configs/colab/colab_sc.toml'
-    FEATURES_CONFIG_FP = '/content/ml_ensembles/configs/env_config.toml'
+    SC_CFG_FP = '/content/ml_ensemble/configs/colab/colab_sc.toml'
+    FEATURES_CONFIG_FP = '/content/ml_ensemble/configs/env_config.toml'
 else:
     SC_CFG_FP = 'C:\\Users\\nicho\PycharmProjects\ml_trading\configs\loader_config.toml'
     FEATURES_CONFIG_FP = "C:\\Users\\nicho\PycharmProjects\ml_trading\configs\env_config.toml"
