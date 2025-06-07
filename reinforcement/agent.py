@@ -1,6 +1,7 @@
 import random
 from collections import deque
 import numpy as np
+import pandas as pd
 import tensorflow as tf
 import keras._tf_keras as keras
 import tf_keras.backend as K
@@ -88,24 +89,38 @@ class DQNAgent:
 
 
 def train(env, agent, num_episodes):
-
+    rewards = []
+    cumulative_rewards = []
+    actions = []
+    all_episodes = []
     for episode in range(num_episodes):
         state = env.reset()
         total_reward = 0
 
         while True:
             action = agent.act(state)
+            actions.append(action)
             next_state, reward, done, _ = env.step(action)
+            rewards.append(reward)
             agent.remember(state, action, reward, next_state, done)
             agent.replay()
             state = next_state
             total_reward += reward
+            cumulative_rewards.append(total_reward)
             if done:
                 break
         agent.update_target_model()
+        df = env.simulator.result().copy()
+        print(f'End Results:\n {df.iloc[-1]}')
+        df['step'] = df.index
+        df['episode'] = episode
+        df.set_index(['episode', 'step'], inplace=True)
+        all_episodes.append(df)
 
         print(f"Episode {episode+1}:  Reward{ total_reward:.4f}")
 
-    return env, agent
+    results_df = pd.concat(all_episodes)
+
+    return results_df
 
 

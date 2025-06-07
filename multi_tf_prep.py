@@ -24,7 +24,7 @@ import os
 if os.name == 'nt':
     sc_cfg = 'C:\\Users\\nicho\PycharmProjects\ml_ensembles\data_config.toml'
 else:
-    sc_cfg = '/content/drive/MyDrive/utils/sc_config.toml'
+    sc_cfg = '/content/drive/MyDrive/utils/SC_CFG_FP.toml'
 
 sc = sch(sc_cfg)
 

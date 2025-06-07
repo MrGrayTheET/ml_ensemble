@@ -3,7 +3,7 @@ import numpy as np
 from sc_loader import sierra_charts as sc
 from technical_prep import FeaturePrep as fp
 # Load Data
-loader = sc('C:\\Users\\nicho\PycharmProjects\ml_trading\example_config.toml')
+loader = sc('C:\\Users\\nicho\PycharmProjects\ml_trading\configs\example_config.toml')
 data_= loader.get_chart('ES_F', formatted=True, resample=False, resample_period='4h')
 data_h4 = data_.resample('4h').apply(loader.resample_logic).dropna()
 returns = (np.log(data_h4.Close) - np.log(data_h4.Close.shift(1))).dropna().values

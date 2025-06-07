@@ -24,7 +24,7 @@ import os
 if os.name == 'nt':
     sc_cfg = 'C:\\Users\\nicho\PycharmProjects\ml_ensembles\data_config.toml'
 else:
-    sc_cfg = '/content/drive/MyDrive/utils/sc_config.toml'
+    sc_cfg = '/content/drive/MyDrive/utils/SC_CFG_FP.toml'
 
 VOL_TARGET = 0.15
 resample_dict = ohlc_rs_dict(include_bid_ask=True)
@@ -60,7 +60,7 @@ class FeaturePrep:
                 rs_params = {'rule':i, 'offset':rs_offset_hourly}
                 vol_lb = 24 / int(i[0]) * vs_lb
 
-            if i in ['5min', '10min', '30min']:
+            elif i in ['5min', '10min', '30min']:
                 rs_params = {'rule':i}
                 vol_lb = (60 / int(i[0])) * 24 * vs_lb
 
@@ -366,7 +366,9 @@ class FeaturePrep:
                              target_vol=False):
 
         self.training_df = self.dfs_dict[training_tf].copy()
+
         feats = self.feats_dict[training_tf]
+
         target_returns = np.log(self.training_df.Close.shift(-target_horizon)) - np.log(self.training_df.Close)
 
         if not vol_normalized_returns:
@@ -374,7 +376,6 @@ class FeaturePrep:
                 self.training_df['target_returns'] = historical_rv(self.dfs_dict['5min'].returns,
                                                                    window=target_horizon).shift(-target_horizon)
         else:
-            self.training_df['ann_vol'] = self.training_df.returns.ewm(span=vol_lb).std() * np.sqrt(252)
             target_returns = target_returns * VOL_TARGET / self.training_df.vol
 
         self.training_df.insert(0, 'target_returns', target_returns)
@@ -388,7 +389,7 @@ class FeaturePrep:
         cols_to_drop = nan_fraction_exceeds(self.dfs_dict[training_tf], axis=0, threshold=0.9)
 
         if 'target_returns' in cols_to_drop:
-            print('More than 40% of the target column is missing, check inputs')
+            print(f'More than {0.9 * 100}% of the target column is missing, check inputs')
             raise ValueError
 
         drop_cols = cols_to_drop[cols_to_drop].index.tolist()
@@ -396,10 +397,8 @@ class FeaturePrep:
         print(f"Columns {drop_cols} have a high amount of nans, dropping before .dropna()")
 
 
-        self.training_df = self.training_df.drop(columns=drop_cols, axis=1)
         features = list(chain.from_iterable([feats[k] for k in feature_types]))
-        self.features = [f for f in features if f not in cols_to_drop]
-        self.training_df = self.training_df.dropna()
+        self.features = features
 
         return self.training_df
 

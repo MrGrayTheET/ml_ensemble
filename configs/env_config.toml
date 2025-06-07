@@ -13,7 +13,7 @@ k = 3
 max_iter = 20
 tol = 1e-5
 gamma = 5.0
-mmd_pair = 7
+mmd_pairs = 7
 h1 = 30
 h2 = 3
 

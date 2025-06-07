@@ -10,7 +10,7 @@ from copy import deepcopy
 
 # Load Data
 
-ticker = pd.read_parquet('C:\\Users\\nicho\PycharmProjects\ml_ensembles\models\es_f.parquet')
+ticker = sch().get_chart('ES_F', formatted=True)
 ticker['Close'] = ticker['Last']
 tfs = ['5min', '10min', '1h']
 

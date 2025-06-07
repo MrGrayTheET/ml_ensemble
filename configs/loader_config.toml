@@ -1,7 +1,7 @@
 [paths]
 unformatted = "F:\\charts\\"
 unformatted_tick = "F:\\charts\\tick\\"
-formatted = "F:\\charts\\formatted\\"
+formatted = "F:\\charts\\formatted\\drive\\"
 intraday = "F:\\charts\\formatted\\tick\\"
 
 [yf_tickers]

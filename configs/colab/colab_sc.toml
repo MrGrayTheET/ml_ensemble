@@ -1,8 +1,8 @@
 [paths]
-unformatted = "/content/drive/tick"
-unformatted_tick = "/content/drive/tick"
-formatted = "F:\\charts\\formatted\\"
-intraday = "F:\\charts\\formatted\\tick\\"
+unformatted = "/content/drive/tick/"
+unformatted_tick = "/content/drive/MyDrive/tick/"
+formatted = "/content/drive/MyDrive/tick/formatted/"
+intraday = "/content/drive/MyDrive/tick/"
 
 [yf_tickers]
 GC_F = "GC=F"
@@ -14,7 +14,7 @@ file_name_format = "_"
 
 [baskets]
 Energy = [ "NG_F", "CL_F",]
-Financials = [ "ES_F", "ZB_F",]
+Financials = [ "ES_F", "ZB_F","VX_F"]
 Agriculturals = [ "LE_F",]
 PMs = [ "GC_F",]
 Agris = [ "LE_F", "ZC_F",]

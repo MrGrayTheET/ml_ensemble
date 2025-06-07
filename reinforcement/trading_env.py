@@ -25,6 +25,7 @@ SOFTWARE.
 Modified by Mr Gray
 """
 import os
+import sys
 import toml
 import logging
 import tempfile
@@ -46,8 +47,15 @@ log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
 log.info('%s logger started.', __name__)
 
-sc = sch('C:\\Users\\nicho\PycharmProjects\ml_trading\configs\loader_config.toml')
-FEATURES_CONFIG_FP = "C:\\Users\\nicho\PycharmProjects\ml_trading\configs\env_config.toml"
+if sys.platform == 'posix':
+    SC_CFG_FP = '/content/ml_ensembles/configs/colab/colab_sc.toml'
+    FEATURES_CONFIG_FP = '/content/ml_ensembles/configs/env_config.toml'
+
+else:
+    SC_CFG_FP = 'C:\\Users\\nicho\PycharmProjects\ml_trading\configs\loader_config.toml'
+    FEATURES_CONFIG_FP = "C:\\Users\\nicho\PycharmProjects\ml_trading\configs\env_config.toml"
+
+sc = sch(SC_CFG_FP)
 tf = '1d'
 
 
@@ -69,6 +77,7 @@ class DataSource:
                  ohlc=False,
                  normalize=True,
                  ):
+        self.timestamps = None
         self.ticker = ticker
         self.trading_days = trading_days
         self.normalize = normalize
@@ -81,6 +90,7 @@ class DataSource:
 
         self.data = self.load_data(ticker, start_date, data_source)
         self.preprocess_data()
+
         self.min_values = self.data.min().values
         self.max_values = self.data.max().values
         self.step = 0
@@ -101,7 +111,6 @@ class DataSource:
         """calculate returns and percentiles, then removes missing values"""
         with open(FEATURES_CONFIG_FP, 'r') as f:
             feature_params = toml.load(f)
-
 
         pre_model = FeaturePrep(self.data, intraday_tfs=[self.tf])
 
@@ -124,7 +133,7 @@ class DataSource:
             pre_model.trend_indicators(timeframe=self.tf, normalize_features=self.normalize, **feature_params['Trend'])
 
         if feature_params['cluster']['use_cluster']:
-            if feature_params['Cluster']['method'] == 'wkmeans':
+            if feature_params['cluster']['method'] == 'wkmeans':
                 model = WKFi(pre_model.dfs_dict[self.tf].copy(), **feature_params['cluster']['wkmeans'])
                 model.fit_windows()
                 df = model.predict_clusters()
@@ -132,21 +141,26 @@ class DataSource:
                 self.additional_features += ['cluster']
 
         training_types = [key for key, v in feature_params['types'].items() if v]
-        pre_model.features['Additional'] += self.additional_features
+        pre_model.feats_dict[self.tf]['Additional'] += self.additional_features
+        self.training_df_data = pre_model.dfs_dict[self.tf]
 
         pre_model.prepare_for_training(self.tf, feature_types=training_types, **feature_params['Training'])
         cols = ['target_returns'] + pre_model.features
 
-        self.data = pre_model.training_df[cols].dropna()
-        self.data = pd.DataFrame(data=self.scaler.fit_transform(self.data), columns=cols)
+        self.data = pre_model.training_df
 
         if isinstance(self.data.index, pd.DatetimeIndex):
             self.data = extract_time_features(self.data, set_index=True, hour=True, dayofweek=True)
+            self.timestamps = self.data['datetime']
             self.data.index = np.arange(len(self.data))
             self.data.drop(columns='datetime', inplace=True)
 
+        self.data = pd.DataFrame(data=self.scaler.fit_transform(self.data[cols]), columns=cols)
+
+
+
         log.info(self.data.info())
-        return
+        return self.data
 
     def reset(self):
         """Provides starting index for time series and resets step"""
@@ -157,9 +171,10 @@ class DataSource:
     def take_step(self):
         """Returns data for current trading day and done signal"""
         obs = self.data.iloc[self.offset + self.step].values
+        timestamp = self.timestamps.iloc[self.offset+self.step].values
         self.step += 1
         done = self.step > self.trading_days
-        return obs, done
+        return obs, timestamp, done
 
 
 class TradingSimulator:
@@ -268,6 +283,7 @@ class TradingEnvironment(gym.Env):
                  data_timeframe='1d',
                  data_source='sc',
                  start_date='2014-01-01',
+                 include_ohlc=True,
                  ticker='ES_F'):
         self.trading_days = trading_days
         self.trading_cost_bps = trading_cost_bps
@@ -276,7 +292,10 @@ class TradingEnvironment(gym.Env):
         self.data_source = DataSource(trading_days=self.trading_days,
                                       data_source=data_source,
                                       start_date=start_date,
-                                      ticker=ticker)
+                                      ticker=ticker, ohlc=include_ohlc)
+
+        self.timestamps = self.data_source.timestamps
+
         self.simulator = TradingSimulator(steps=self.trading_days,
                                           trading_cost_bps=self.trading_cost_bps,
                                           time_cost_bps=self.time_cost_bps)
@@ -292,7 +311,7 @@ class TradingEnvironment(gym.Env):
     def step(self, action):
         """Returns state observation, reward, done and info"""
         assert self.action_space.contains(action), '{} {} invalid'.format(action, type(action))
-        observation, done = self.data_source.take_step()
+        observation, timestamp, done = self.data_source.take_step()
         reward, info = self.simulator.take_step(action=action,
                                                 market_return=observation[0])
         return observation, reward, done, info
@@ -302,4 +321,12 @@ class TradingEnvironment(gym.Env):
         self.data_source.reset()
         self.simulator.reset()
         return self.data_source.take_step()[0]
+
+from agent import DQNAgent, train
+
+t_env = TradingEnvironment(1250,data_source='sc', ticker='ES_F')
+
+t_agent = DQNAgent(state_dim=t_env.reset().shape[0], action_dim=t_env.action_space.n)
+
+train(t_env, t_agent, 10)
 
