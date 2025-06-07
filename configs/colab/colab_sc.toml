@@ -1,7 +1,7 @@
 [paths]
 unformatted = "/content/drive/tick/"
 unformatted_tick = "/content/drive/MyDrive/tick/"
-formatted = "/content/drive/MyDrive/tick/formatted/"
+formatted = "/content/drive/MyDrive/tick/drive/"
 intraday = "/content/drive/MyDrive/tick/"
 
 [yf_tickers]
