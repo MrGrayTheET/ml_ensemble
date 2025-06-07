@@ -170,7 +170,7 @@ class DataSource:
     def take_step(self):
         """Returns data for current trading day and done signal"""
         obs = self.data.iloc[self.offset + self.step].values
-        timestamp = self.timestamps.iloc[self.offset+self.step].values
+        timestamp = self.timestamps.iloc[self.offset+self.step]
         self.step += 1
         done = self.step > self.trading_days
         return obs, timestamp, done
@@ -195,6 +195,7 @@ class TradingSimulator:
         self.costs = np.zeros(self.steps)
         self.trades = np.zeros(self.steps)
         self.market_returns = np.zeros(self.steps)
+        self.timestamps = np.zeros(self.steps)
 
     def reset(self):
         self.step = 0
@@ -207,7 +208,7 @@ class TradingSimulator:
         self.trades.fill(0)
         self.market_returns.fill(0)
 
-    def take_step(self, action, market_return):
+    def take_step(self, action, market_return, timestamp):
         """ Calculates NAVs, trading costs and reward
             based on an action and latest market return
             and returns the reward and a summary of the day's activity. """
@@ -217,6 +218,7 @@ class TradingSimulator:
         start_market_nav = self.market_navs[max(0, self.step - 1)]
         self.market_returns[self.step] = market_return
         self.actions[self.step] = action
+        self.timestamps[self.step] = timestamp
 
         end_position = action - 1  # short, neutral, long
         n_trades = end_position - start_position
@@ -243,14 +245,16 @@ class TradingSimulator:
 
     def result(self):
         """returns current state as pd.DataFrame """
-        return pd.DataFrame({'action': self.actions,  # current action
+        return pd.DataFrame({'action': self.actions,
+                             'timestamp': self.timestamps, # current action
                              'nav': self.navs,  # starting Net Asset Value (NAV)
                              'market_nav': self.market_navs,
                              'market_return': self.market_returns,
                              'strategy_return': self.strategy_returns,
                              'position': self.positions,  # eod position
                              'cost': self.costs,  # eod costs
-                             'trade': self.trades})  # eod trade)
+                             'trade': self.trades,
+                            })  # eod trade)
 
 
 class TradingEnvironment(gym.Env):
@@ -309,10 +313,15 @@ class TradingEnvironment(gym.Env):
 
     def step(self, action):
         """Returns state observation, reward, done and info"""
+
         assert self.action_space.contains(action), '{} {} invalid'.format(action, type(action))
+
         observation, timestamp, done = self.data_source.take_step()
+
         reward, info = self.simulator.take_step(action=action,
-                                                market_return=observation[0])
+                                                market_return=observation[0],
+                                                timestamp=timestamp)
+
         return observation, reward, done, info
 
     def reset(self):
