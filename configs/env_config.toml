@@ -5,31 +5,35 @@ cluster = true
 
 
 [cluster]
+use_cluster = true
 method = 'wkmeans'
+
+[cluster.wkmeans]
 k = 3
-features = []
 max_iter = 20
 tol = 1e-5
 gamma = 5.0
 mmd_pair = 7
+h1 = 30
+h2 = 3
 
 [types]
 Volatility = true
 Trend = true
 Volume = true
-Additional = false
+Additional = true
 
 [Volatility]
-ATR = true
+ATR = false
 ATR_length = 42
 hawkes = true
-hawkes_mean = 60
+hawkes_mean = 42
 kappa = 0.1
 hawkes_signal_lb=21
 normalize_range_len = 10
 hawkes_binary_signal = true
 hl_range = true
-range_lengths = [10, 50]
+range_lengths = [10, 20]
 lagged_vol = false
 vol_lags = [5]
 lagged_semivariance=false
@@ -41,24 +45,24 @@ rvol_days = 10
 delta = false
 delta_as_pct = true
 VSA = true
-vsa_cols = ['AskVolume', 'BidVolume']
+vsa_cols = ['Volume']
 vsa_lb = 30
 normalize_vol = false
 
 [Trend]
 SMAs = false
 KAMAs = true
-kama_params = [10,2,28, 20,2,32, 50, 2,32]
+kama_params = [20,2,32, 50, 2,32]
 sma_lens = [50, 200]
 momentum = true
-momentum_periods = [21, 63, 96]
-use_scaled_returns = false
+momentum_periods = [21, 63]
+use_scaled_returns = true
 
 [Additional]
 cols = ["cluster"]
 
 [Training]
-vol_normalized_returns = false
+vol_normalized_returns = true
 vol_lb = 63
 target_horizon = 1
 
