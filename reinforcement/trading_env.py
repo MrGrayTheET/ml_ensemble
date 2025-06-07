@@ -47,10 +47,9 @@ log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
 log.info('%s logger started.', __name__)
 
-if sys.platform == 'posix':
+if sys.platform != 'win32':
     SC_CFG_FP = '/content/ml_ensembles/configs/colab/colab_sc.toml'
     FEATURES_CONFIG_FP = '/content/ml_ensembles/configs/env_config.toml'
-
 else:
     SC_CFG_FP = 'C:\\Users\\nicho\PycharmProjects\ml_trading\configs\loader_config.toml'
     FEATURES_CONFIG_FP = "C:\\Users\\nicho\PycharmProjects\ml_trading\configs\env_config.toml"
@@ -321,4 +320,12 @@ class TradingEnvironment(gym.Env):
         self.data_source.reset()
         self.simulator.reset()
         return self.data_source.take_step()[0]
+
+from agent import DQNAgent, train
+
+t_env = TradingEnvironment(1250,data_source='sc', ticker='ES_F')
+
+t_agent = DQNAgent(state_dim=t_env.reset().shape[0], action_dim=t_env.action_space.n)
+
+train(t_env, t_agent, 10)
 
