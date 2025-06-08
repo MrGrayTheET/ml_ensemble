@@ -195,7 +195,7 @@ class TradingSimulator:
         self.costs = np.zeros(self.steps)
         self.trades = np.zeros(self.steps)
         self.market_returns = np.zeros(self.steps)
-        self.timestamps = np.zeros(self.steps)
+        self.timestamps = np.empty(self.steps, dtype='datetime64[ns]')
 
     def reset(self):
         self.step = 0
