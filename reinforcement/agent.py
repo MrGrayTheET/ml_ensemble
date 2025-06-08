@@ -89,9 +89,6 @@ class DQNAgent:
 
 
 def train(env, agent, num_episodes):
-    rewards = []
-    cumulative_rewards = []
-    actions = []
     all_episodes = []
     for episode in range(num_episodes):
         state = env.reset()
@@ -99,14 +96,11 @@ def train(env, agent, num_episodes):
 
         while True:
             action = agent.act(state)
-            actions.append(action)
             next_state, reward, done, _ = env.step(action)
-            rewards.append(reward)
             agent.remember(state, action, reward, next_state, done)
             agent.replay()
             state = next_state
             total_reward += reward
-            cumulative_rewards.append(total_reward)
             if done:
                 break
         agent.update_target_model()

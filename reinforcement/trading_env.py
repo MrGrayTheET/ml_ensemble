@@ -245,7 +245,8 @@ class TradingSimulator:
 
     def result(self):
         """returns current state as pd.DataFrame """
-        return pd.DataFrame({'action': self.actions,
+        return pd.DataFrame({'timestamp': self.timestamps,
+                             'action': self.actions,
                              'timestamp': self.timestamps, # current action
                              'nav': self.navs,  # starting Net Asset Value (NAV)
                              'market_nav': self.market_navs,
