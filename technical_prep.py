@@ -371,11 +371,8 @@ class FeaturePrep:
 
         target_returns = np.log(self.training_df.Close.shift(-target_horizon)) - np.log(self.training_df.Close)
 
-        if not vol_normalized_returns:
-            if target_vol:
-                self.training_df['target_returns'] = historical_rv(self.dfs_dict['5min'].returns,
-                                                                   window=target_horizon).shift(-target_horizon)
-        else:
+        if vol_normalized_returns:
+
             target_returns = target_returns * VOL_TARGET / self.training_df.vol
 
         self.training_df.insert(0, 'target_returns', target_returns)

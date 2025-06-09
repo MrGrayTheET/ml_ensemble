@@ -90,6 +90,7 @@ class DataSource:
             self.additional_features += ['Open', 'High', 'Low', 'Close']
 
         self.data = self.load_data(ticker, start_date, data_source)
+
         self.preprocess_data()
 
         self.min_values = self.data.min().values
@@ -114,6 +115,7 @@ class DataSource:
             feature_params = toml.load(f)
 
         pre_model = FeaturePrep(self.data, intraday_tfs=[self.tf])
+
         if feature_params['types']['Volatility']:
             pre_model.volatility_signals(timeframe=self.tf,
                                          normalize_atr=self.normalize,
@@ -147,8 +149,9 @@ class DataSource:
 
 
         pre_model.prepare_for_training(self.tf, feature_types=training_types, **feature_params['Training'])
+        print(pre_model.dfs_dict['1d'])
 
-        pre_model.training_df.iloc[:, 0] = pre_model.training_df.target_returns
+
         features = pre_model.features + self.additional_features
         self.data = pre_model.training_df.copy()
 
@@ -161,7 +164,9 @@ class DataSource:
         self.data = pd.DataFrame(data=self.scaler.fit_transform(self.data[features]),
                                  columns=features)
 
-        cols = ['target_returns', *features]
+        self.data.insert(0, 'returns', pre_model.training_df.target_returns.values)
+
+        cols = ['returns', *features]
         log.info(self.data.info())
         self.data = self.data[cols]
 

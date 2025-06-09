@@ -12,11 +12,6 @@ from argparse import Namespace
 
 self = Namespace
 
-t_env = TradingEnvironment(1250,data_source='sc', ticker='GC_F')
+t_env = TradingEnvironment(1250,data_source='sc', ticker='GC_F',data_timeframe='4h')
 
 t_agent = DQNAgent(state_dim=t_env.reset().shape[0], action_dim=t_env.action_space.n)
-
-train(t_env, t_agent, 10)
-
-
-

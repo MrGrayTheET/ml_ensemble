@@ -28,7 +28,7 @@ def multi_sc_df(df_ticker_dict, columns=['Open', 'High', 'Low', 'Close'], ticker
 
 class sierra_charts:
 
-    def __init__(self, config_file="C:\\Users\\nicho\PycharmProjects\ml_trading\example_config.toml", config_data=None):
+    def __init__(self, config_file="C:\\Users\\nicho\PycharmProjects\ml_trading\configs\loader_config.toml", config_data=None):
         self.resample_logic = {'Open': 'first',
                                'High': 'max',
                                'Low': 'min',

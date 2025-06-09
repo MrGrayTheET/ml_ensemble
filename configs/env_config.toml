@@ -71,7 +71,7 @@ use_scaled_returns = true
 cols = ["cluster"]
 
 [Training]
-vol_normalized_returns = true
+vol_normalized_returns = false
 vol_lb = 63
 target_horizon = 1
 
