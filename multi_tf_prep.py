@@ -33,7 +33,7 @@ resample_dict = ohlc_rs_dict(include_bid_ask=True)
 
 class MultiTfModel:
 
-    def __init__(self, data, intraday_tfs=['5min', '10min', '1h', '4h'], train_test_ratio=0.8, hf_timeframe='5min',
+    def __init__(self, data,multi_tf=True, intraday_tfs=['5min', '10min', '1h', '4h'], train_test_ratio=0.8, hf_timeframe='5min',
                  vol_scale=True,
                  project_dir="F:\\ML\\multi_tf\\", vs_lb=22):
         self.features = None
@@ -54,7 +54,10 @@ class MultiTfModel:
             vol = calc_daily_vol(self.dfs_dict['1d'].returns, vs_lb).ffill()
             self.annualized_vol = vol * np.sqrt(252)
 
+
         for i in intraday_tfs:
+            if i == '1d':
+                break
             self.dfs_dict.update({i: data.resample(i).apply(resample_dict).ffill().dropna()})
             self.dfs_dict[i]['returns'] = log_returns(self.dfs_dict['1d'].Close)
             if vol_scale:

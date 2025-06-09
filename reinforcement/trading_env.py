@@ -97,7 +97,7 @@ class DataSource:
         self.step = 0
         self.offset = None
 
-    def load_data(self, ticker, start_date, data_source='sc'):
+    def load_data(self, ticker, start_date, data_source):
         if data_source == 'yf':
             df = yf.download(ticker, start=start_date, interval=self.tf)
         else:
@@ -161,8 +161,8 @@ class DataSource:
         self.data = pd.DataFrame(data=self.scaler.fit_transform(self.data[features]),
                                  columns=features)
 
+        self.data.iloc[:, 0] = pre_model.training_df['target_returns']
 
-        self.data.insert(0, 'returns', pre_model.training_df['target_returns'])
         cols = ['returns', *features]
 
 
