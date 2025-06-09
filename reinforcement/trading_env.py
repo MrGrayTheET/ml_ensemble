@@ -37,9 +37,9 @@ import yfinance as yf
 from gym import spaces
 from gym.utils import seeding
 from technical_prep import FeaturePrep
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, scale
 from feature_engineering import extract_time_features
-from volatility.regimes import WKFi
+from volatility.regimes import WKFi, AggClusters, GaussianMixture
 from sc_loader import sierra_charts as sch
 
 logging.basicConfig()
@@ -74,8 +74,10 @@ class DataSource:
                  data_source='yf',
                  data_timeframe='1d',
                  ohlc=False,
-                 normalize=True,
+                 normalize=True, features_config=None,
                  ):
+        if features_config is None: features_config = FEATURES_CONFIG_FP
+        self.features_config = features_config
         self.timestamps = None
         self.ticker = ticker
         self.trading_days = trading_days
@@ -108,11 +110,10 @@ class DataSource:
 
     def preprocess_data(self):
         """calculate returns and percentiles, then removes missing values"""
-        with open(FEATURES_CONFIG_FP, 'r') as f:
+        with open(self.features_config, 'r') as f:
             feature_params = toml.load(f)
 
         pre_model = FeaturePrep(self.data, intraday_tfs=[self.tf])
-
         if feature_params['types']['Volatility']:
             pre_model.volatility_signals(timeframe=self.tf,
                                          normalize_atr=self.normalize,
@@ -139,13 +140,16 @@ class DataSource:
                 pre_model.dfs_dict[self.tf]['cluster'] = df['cluster']
                 self.additional_features += ['cluster']
 
+            if feature_params['cluster']['method'] == 'agg':
+                clust = AggClusters(pre_model.dfs_dict[self.tf].copy(), n_components=feature_params['cluster']['k'])
+
         training_types = [key for key, v in feature_params['types'].items() if v]
-        pre_model.feats_dict[self.tf]['Additional'] += self.additional_features
-        self.training_df_data = pre_model.dfs_dict[self.tf]
+
 
         pre_model.prepare_for_training(self.tf, feature_types=training_types, **feature_params['Training'])
-        cols = ['target_returns'] + pre_model.features
 
+
+        features = pre_model.features + self.additional_features
         self.data = pre_model.training_df.copy()
 
         if isinstance(self.data.index, pd.DatetimeIndex):
@@ -154,12 +158,17 @@ class DataSource:
             self.data.index = np.arange(len(self.data))
             self.data.drop(columns='datetime', inplace=True)
 
-        self.data = pd.DataFrame(data=self.scaler.fit_transform(self.data[pre_model.features]),
-                                 columns=pre_model.features)
+        self.data = pd.DataFrame(data=self.scaler.fit_transform(self.data[features]),
+                                 columns=features)
+
+
         self.data.insert(0, 'returns', pre_model.training_df['target_returns'])
+        cols = ['returns', *features]
+
+
         log.info(self.data.info())
 
-        return self.data
+        return self.data[cols]
 
     def reset(self):
         """Provides starting index for time series and resets step"""
@@ -222,18 +231,7 @@ class TradingSimulator:
 
         end_position = action - 1  # short, neutral, long
         trade = end_position - start_position
-
-        if action != 1 and end_position != 0:
-            n_trades = self.trades[self.step - 1] + 1
-            if action == 2:
-                print(f'Buy 1 at {timestamp}\n Cumulative trades: {n_trades}\n\n')
-            if action == 0:
-                print(f'Sell 1 at {timestamp}\n Cumulative trades: {n_trades}\n\n')
-
-
-        else:
-            n_trades = self.trades[self.step - 1]
-
+        n_trades = self.trades[self.step - 1]
         self.positions[self.step] = end_position
         self.trades[self.step] = n_trades
 
@@ -247,6 +245,17 @@ class TradingSimulator:
         if self.step != 0:
             self.navs[self.step] = start_nav * (1 + self.strategy_returns[self.step])
             self.market_navs[self.step] = start_market_nav * (1 + self.market_returns[self.step])
+
+        if trade and end_position:
+            n_trades += 1
+            if action == 2:
+                print(f'Buy 1 at {timestamp}\n Cumulative trades: {n_trades}\n\n')
+            if action == 0:
+                print(f'Sell 1 at {timestamp}\n Cumulative trades: {n_trades}\n\n')
+
+        elif trade and not end_position:
+            print(f'Exited position at {timestamp}\n Cumulative PnL:{self.navs[self.step]}')
+
 
         info = {'reward': reward,
                 'nav': self.navs[self.step],
