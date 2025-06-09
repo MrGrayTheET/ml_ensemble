@@ -169,7 +169,7 @@ class DataSource:
 
         cols = ['returns', *features]
         log.info(self.data.info())
-        self.data = self.data[cols]
+        self.data = self.data[cols].dropna()
 
         return
 
@@ -179,13 +179,13 @@ class DataSource:
         self.offset = np.random.randint(low=0, high=high)
         self.step = 0
 
-    def current_observation(self):
+    def take_step(self):
         """Returns data for current trading day and done signal"""
         obs = self.data.iloc[self.offset + self.step].values
         timestamp = self.timestamps.iloc[self.offset + self.step]
         self.step += 1
         done = self.step > self.trading_days
-        return obs, timestamp, done
+        return obs, done
 
 
 class TradingSimulator:
@@ -220,7 +220,7 @@ class TradingSimulator:
         self.trades.fill(0)
         self.market_returns.fill(0)
 
-    def take_step(self, action, market_return, timestamp):
+    def take_step(self, action, market_return):
         """ Calculates NAVs, trading costs and reward
             based on an action and latest market return
             and returns the reward and a summary of the day's activity. """
@@ -230,56 +230,40 @@ class TradingSimulator:
         start_market_nav = self.market_navs[max(0, self.step - 1)]
         self.market_returns[self.step] = market_return
         self.actions[self.step] = action
-        self.timestamps[self.step] = timestamp
 
         end_position = action - 1  # short, neutral, long
-        trade = end_position - start_position
-
-        if self.step == 0:
-            self.trades[self.step] = 1 if trade else 0
-        else:
-            self.trades[self.step] = self.trades[self.step - 1] + (1 if trade else 0)
-
+        n_trades = end_position - start_position
         self.positions[self.step] = end_position
-        trade_costs = abs(trade) * self.trading_cost_bps
-        time_cost = 0 if trade else self.time_cost_bps
+        self.trades[self.step] = n_trades
+
+        # roughly value based since starting NAV = 1
+        trade_costs = abs(n_trades) * self.trading_cost_bps
+        time_cost = 0 if n_trades else self.time_cost_bps
         self.costs[self.step] = trade_costs + time_cost
-        reward = start_position * market_return - self.costs[max(0, self.step - 1)]
+        reward = start_position * market_return - self.costs[max(0, self.step-1)]
         self.strategy_returns[self.step] = reward
 
         if self.step != 0:
             self.navs[self.step] = start_nav * (1 + self.strategy_returns[self.step])
             self.market_navs[self.step] = start_market_nav * (1 + self.market_returns[self.step])
 
-        if trade and end_position:
-            if action == 2:
-                print(f'Buy 1 at {timestamp}\n Cumulative trades: {n_trades}\n\n')
-            if action == 0:
-                print(f'Sell 1 at {timestamp}\n Cumulative trades: {n_trades}\n\n')
-
-        elif trade and not end_position:
-            print(f'Exited position at {timestamp}\n Cumulative PnL:{self.navs[self.step]}')
-
-
         info = {'reward': reward,
-                'nav': self.navs[self.step],
-                'costs': self.costs[self.step]}
+                'nav'   : self.navs[self.step],
+                'costs' : self.costs[self.step]}
 
         self.step += 1
         return reward, info
 
     def result(self):
         """returns current state as pd.DataFrame """
-        return pd.DataFrame({'timestamp': self.timestamps,
-                             'action': self.actions,  # current action
-                             'nav': self.navs,  # starting Net Asset Value (NAV)
-                             'market_nav': self.market_navs,
-                             'market_return': self.market_returns,
+        return pd.DataFrame({'action'         : self.actions,  # current action
+                             'nav'            : self.navs,  # starting Net Asset Value (NAV)
+                             'market_nav'     : self.market_navs,
+                             'market_return'  : self.market_returns,
                              'strategy_return': self.strategy_returns,
-                             'position': self.positions,  # eod position
-                             'cost': self.costs,  # eod costs
-                             'trade': self.trades,
-                             })  # eod trade)
+                             'position'       : self.positions,  # eod position
+                             'cost'           : self.costs,  # eod costs
+                             'trade'          : self.trades})  # eod trade)
 
 
 class TradingEnvironment(gym.Env):
@@ -308,25 +292,20 @@ class TradingEnvironment(gym.Env):
                  trading_days=252,
                  trading_cost_bps=1e-3,
                  time_cost_bps=1e-4,
-                 data_timeframe='1d',
-                 data_source='sc',
-                 start_date='2014-01-01',
-                 include_ohlc=True,
-                 ticker='ES_F', config_file=None):
+                 ticker='AAPL', source='sc',
+                 start_date='2014-01-01',data_timeframe='4h',
+                 ohlc=False, cfg_file = None):
         self.trading_days = trading_days
         self.trading_cost_bps = trading_cost_bps
         self.ticker = ticker
         self.time_cost_bps = time_cost_bps
-
         self.data_source = DataSource(trading_days=self.trading_days,
-                                      data_source=data_source,
+                                      data_source=source,
                                       start_date=start_date,
                                       ticker=ticker,
-                                      ohlc=include_ohlc,
-                                      features_config=config_file)
-
-        self.timestamps = self.data_source.timestamps
-
+                                      data_timeframe=data_timeframe,
+                                      ohlc=ohlc,
+                                      features_config=cfg_file)
         self.simulator = TradingSimulator(steps=self.trading_days,
                                           trading_cost_bps=self.trading_cost_bps,
                                           time_cost_bps=self.time_cost_bps)
@@ -341,20 +320,19 @@ class TradingEnvironment(gym.Env):
 
     def step(self, action):
         """Returns state observation, reward, done and info"""
-
         assert self.action_space.contains(action), '{} {} invalid'.format(action, type(action))
-
-        observation, timestamp, done = self.data_source.current_observation()
-
+        observation, done = self.data_source.take_step()
         reward, info = self.simulator.take_step(action=action,
-                                                market_return=observation[0],
-                                                timestamp=timestamp)
-
+                                                market_return=observation[0])
         return observation, reward, done, info
 
     def reset(self):
         """Resets DataSource and TradingSimulator; returns first observation"""
         self.data_source.reset()
         self.simulator.reset()
-        obs, _ = self.data_source.current_observation()
-        return obs
+        return self.data_source.take_step()[0]
+
+    # TODO
+    def render(self, mode='human'):
+        """Not implemented"""
+        pass
