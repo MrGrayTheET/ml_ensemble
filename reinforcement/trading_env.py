@@ -48,11 +48,12 @@ log.setLevel(logging.INFO)
 log.info('%s logger started.', __name__)
 
 if sys.platform != 'win32':
+    CFG_ROOT = '/content/ml_ensemble/configs/'
     SC_CFG_FP = '/content/ml_ensemble/configs/colab/colab_sc.toml'
-    FEATURES_CONFIG_FP = '/content/ml_ensemble/configs/env_config.toml'
+
 else:
     SC_CFG_FP = 'C:\\Users\\nicho\PycharmProjects\ml_trading\configs\loader_config.toml'
-    FEATURES_CONFIG_FP = "C:\\Users\\nicho\PycharmProjects\ml_trading\configs\env_config.toml"
+    CFG_ROOT = "C:\\Users\\nicho\PycharmProjects\ml_trading\configs"
 
 sc = sch(SC_CFG_FP)
 tf = '1d'
@@ -76,8 +77,8 @@ class DataSource:
                  ohlc=False,
                  normalize=True, features_config=None,
                  ):
-        if features_config is None: features_config = FEATURES_CONFIG_FP
-        self.features_config = features_config
+
+        self.features_config = features_config if features_config else os.path.join(CFG_ROOT, 'env_config.toml')
         self.timestamps = None
         self.ticker = ticker
         self.trading_days = trading_days
@@ -178,7 +179,7 @@ class DataSource:
         self.offset = np.random.randint(low=0, high=high)
         self.step = 0
 
-    def take_step(self):
+    def current_observation(self):
         """Returns data for current trading day and done signal"""
         obs = self.data.iloc[self.offset + self.step].values
         timestamp = self.timestamps.iloc[self.offset + self.step]
@@ -233,11 +234,13 @@ class TradingSimulator:
 
         end_position = action - 1  # short, neutral, long
         trade = end_position - start_position
-        n_trades = self.trades[self.step - 1]
-        self.positions[self.step] = end_position
-        self.trades[self.step] = n_trades
 
-        # roughly value based since starting NAV = 1
+        if self.step == 0:
+            self.trades[self.step] = 1 if trade else 0
+        else:
+            self.trades[self.step] = self.trades[self.step - 1] + (1 if trade else 0)
+
+        self.positions[self.step] = end_position
         trade_costs = abs(trade) * self.trading_cost_bps
         time_cost = 0 if trade else self.time_cost_bps
         self.costs[self.step] = trade_costs + time_cost
@@ -249,7 +252,6 @@ class TradingSimulator:
             self.market_navs[self.step] = start_market_nav * (1 + self.market_returns[self.step])
 
         if trade and end_position:
-            n_trades += 1
             if action == 2:
                 print(f'Buy 1 at {timestamp}\n Cumulative trades: {n_trades}\n\n')
             if action == 0:
@@ -269,8 +271,7 @@ class TradingSimulator:
     def result(self):
         """returns current state as pd.DataFrame """
         return pd.DataFrame({'timestamp': self.timestamps,
-                             'action': self.actions,
-                             'timestamp': self.timestamps,  # current action
+                             'action': self.actions,  # current action
                              'nav': self.navs,  # starting Net Asset Value (NAV)
                              'market_nav': self.market_navs,
                              'market_return': self.market_returns,
@@ -311,15 +312,18 @@ class TradingEnvironment(gym.Env):
                  data_source='sc',
                  start_date='2014-01-01',
                  include_ohlc=True,
-                 ticker='ES_F'):
+                 ticker='ES_F', config_file=None):
         self.trading_days = trading_days
         self.trading_cost_bps = trading_cost_bps
         self.ticker = ticker
         self.time_cost_bps = time_cost_bps
+
         self.data_source = DataSource(trading_days=self.trading_days,
                                       data_source=data_source,
                                       start_date=start_date,
-                                      ticker=ticker, ohlc=include_ohlc)
+                                      ticker=ticker,
+                                      ohlc=include_ohlc,
+                                      features_config=config_file)
 
         self.timestamps = self.data_source.timestamps
 
@@ -340,7 +344,7 @@ class TradingEnvironment(gym.Env):
 
         assert self.action_space.contains(action), '{} {} invalid'.format(action, type(action))
 
-        observation, timestamp, done = self.data_source.take_step()
+        observation, timestamp, done = self.data_source.current_observation()
 
         reward, info = self.simulator.take_step(action=action,
                                                 market_return=observation[0],
@@ -352,4 +356,5 @@ class TradingEnvironment(gym.Env):
         """Resets DataSource and TradingSimulator; returns first observation"""
         self.data_source.reset()
         self.simulator.reset()
-        return self.data_source.take_step()[0]
+
+        return self.data_source.current_observation()[0]

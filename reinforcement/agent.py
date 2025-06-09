@@ -96,9 +96,6 @@ def train(env, agent, num_episodes):
 
         while True:
             action = agent.act(state)
-            if action-1 != 0:
-                if action == 2:
-                    print('Bought at  ')
             next_state, reward, done, _ = env.step(action)
             agent.remember(state, action, reward, next_state, done)
             state = next_state
