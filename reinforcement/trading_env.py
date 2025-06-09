@@ -78,7 +78,7 @@ class DataSource:
                  normalize=True, features_config=None,
                  ):
 
-        self.features_config = features_config if features_config else os.path.join(CFG_ROOT, 'env_config.toml')
+        self.features_config = os.path.join(CFG_ROOT,features_config) if features_config else os.path.join(CFG_ROOT, 'env_config.toml')
         self.timestamps = None
         self.ticker = ticker
         self.trading_days = trading_days
