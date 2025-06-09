@@ -148,7 +148,7 @@ class DataSource:
 
         pre_model.prepare_for_training(self.tf, feature_types=training_types, **feature_params['Training'])
 
-
+        pre_model.training_df.iloc[:, 0] = pre_model.training_df.target_returns
         features = pre_model.features + self.additional_features
         self.data = pre_model.training_df.copy()
 
@@ -161,14 +161,11 @@ class DataSource:
         self.data = pd.DataFrame(data=self.scaler.fit_transform(self.data[features]),
                                  columns=features)
 
-        self.data.iloc[:, 0] = pre_model.training_df['target_returns']
-
-        cols = ['returns', *features]
-
-
+        cols = ['target_returns', *features]
         log.info(self.data.info())
+        self.data = self.data[cols]
 
-        return self.data[cols]
+        return
 
     def reset(self):
         """Provides starting index for time series and resets step"""
