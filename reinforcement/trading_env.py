@@ -146,7 +146,7 @@ class DataSource:
         pre_model.prepare_for_training(self.tf, feature_types=training_types, **feature_params['Training'])
         cols = ['target_returns'] + pre_model.features
 
-        self.data = pre_model.training_df
+        self.data = pre_model.training_df.copy()
 
         if isinstance(self.data.index, pd.DatetimeIndex):
             self.data = extract_time_features(self.data, set_index=True, hour=True, dayofweek=True)
@@ -154,11 +154,11 @@ class DataSource:
             self.data.index = np.arange(len(self.data))
             self.data.drop(columns='datetime', inplace=True)
 
-        self.data = pd.DataFrame(data=self.scaler.fit_transform(self.data[cols]), columns=cols)
-
-
-
+        self.data = pd.DataFrame(data=self.scaler.fit_transform(self.data[pre_model.features]),
+                                 columns=pre_model.features)
+        self.data.insert(0, 'returns', pre_model.training_df['target_returns'])
         log.info(self.data.info())
+
         return self.data
 
     def reset(self):
@@ -170,7 +170,7 @@ class DataSource:
     def take_step(self):
         """Returns data for current trading day and done signal"""
         obs = self.data.iloc[self.offset + self.step].values
-        timestamp = self.timestamps.iloc[self.offset+self.step]
+        timestamp = self.timestamps.iloc[self.offset + self.step]
         self.step += 1
         done = self.step > self.trading_days
         return obs, timestamp, done
@@ -221,13 +221,25 @@ class TradingSimulator:
         self.timestamps[self.step] = timestamp
 
         end_position = action - 1  # short, neutral, long
-        n_trades = end_position - start_position
+        trade = end_position - start_position
+
+        if action != 1 and end_position != 0:
+            n_trades = self.trades[self.step - 1] + 1
+            if action == 2:
+                print(f'Buy 1 at {timestamp}\n Cumulative trades: {n_trades}\n\n')
+            if action == 0:
+                print(f'Sell 1 at {timestamp}\n Cumulative trades: {n_trades}\n\n')
+
+
+        else:
+            n_trades = self.trades[self.step - 1]
+
         self.positions[self.step] = end_position
         self.trades[self.step] = n_trades
 
         # roughly value based since starting NAV = 1
-        trade_costs = abs(n_trades) * self.trading_cost_bps
-        time_cost = 0 if n_trades else self.time_cost_bps
+        trade_costs = abs(trade) * self.trading_cost_bps
+        time_cost = 0 if trade else self.time_cost_bps
         self.costs[self.step] = trade_costs + time_cost
         reward = start_position * market_return - self.costs[max(0, self.step - 1)]
         self.strategy_returns[self.step] = reward
@@ -247,7 +259,7 @@ class TradingSimulator:
         """returns current state as pd.DataFrame """
         return pd.DataFrame({'timestamp': self.timestamps,
                              'action': self.actions,
-                             'timestamp': self.timestamps, # current action
+                             'timestamp': self.timestamps,  # current action
                              'nav': self.navs,  # starting Net Asset Value (NAV)
                              'market_nav': self.market_navs,
                              'market_return': self.market_returns,
@@ -255,7 +267,7 @@ class TradingSimulator:
                              'position': self.positions,  # eod position
                              'cost': self.costs,  # eod costs
                              'trade': self.trades,
-                            })  # eod trade)
+                             })  # eod trade)
 
 
 class TradingEnvironment(gym.Env):
