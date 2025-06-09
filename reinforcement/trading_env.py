@@ -356,5 +356,5 @@ class TradingEnvironment(gym.Env):
         """Resets DataSource and TradingSimulator; returns first observation"""
         self.data_source.reset()
         self.simulator.reset()
-
-        return self.data_source.current_observation()[0]
+        obs, _ = self.data_source.current_observation()
+        return obs
