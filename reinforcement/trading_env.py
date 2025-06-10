@@ -39,7 +39,7 @@ from gym.utils import seeding
 from technical_prep import FeaturePrep
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, scale
 from feature_engineering import extract_time_features
-from volatility.regimes import WKFi, AggClusters, GaussianMixture
+from volatility.regimes import WKFi, AggClusters
 from sc_loader import sierra_charts as sch
 
 logging.basicConfig()
@@ -75,11 +75,14 @@ class DataSource:
                  data_source='yf',
                  data_timeframe='1d',
                  ohlc=False,
-                 normalize=True, features_config=None,
+                 normalize=True,
+                 time_features=False,
+                 features_config=None,
                  ):
 
         self.features_config = os.path.join(CFG_ROOT,features_config) if features_config else os.path.join(CFG_ROOT, 'env_config.toml')
         self.timestamps = None
+        self.time = ['hour', 'dayofweek'] if time_features else []
         self.ticker = ticker
         self.trading_days = trading_days
         self.normalize = normalize
@@ -153,14 +156,15 @@ class DataSource:
         print(pre_model.dfs_dict['1d'])
 
 
-        features = pre_model.features + self.additional_features
+        features = pre_model.features + self.additional_features + self.time
         self.data = pre_model.training_df.copy()
 
         if isinstance(self.data.index, pd.DatetimeIndex):
             self.data = extract_time_features(self.data, set_index=True, hour=True, dayofweek=True)
-            self.timestamps = self.data['datetime']
             self.data.index = np.arange(len(self.data))
-            self.data.drop(columns='datetime', inplace=True)
+            if 'datetime' in self.data.columns:
+                self.data.drop(columns='datetime', inplace=True)
+
 
         self.data = pd.DataFrame(data=self.scaler.fit_transform(self.data[features]),
                                  columns=features)

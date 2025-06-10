@@ -35,14 +35,14 @@ Additional = false
 [Volatility]
 ATR = false
 ATR_length = 42
-hawkes = false
+hawkes = true
 hawkes_mean = 42
 kappa = 0.1
 hawkes_signal_lb=21
 normalize_range_len = 10
 hawkes_binary_signal = true
 hl_range = true
-range_lengths = [20, 50]
+range_lengths = [20, 10]
 lagged_vol = false
 vol_lags = [5]
 lagged_semivariance=false
@@ -59,10 +59,10 @@ vsa_lb = 30
 normalize_vol = false
 
 [Trend]
-SMAs = false
-KAMAs = true
+SMAs = true
+KAMAs = false
 kama_params = [20,2,30, 50, 2,30]
-sma_lens = [50, 200]
+sma_lens = [20, 50, 200]
 momentum = true
 momentum_periods = [5, 21, 63]
 use_scaled_returns = true
