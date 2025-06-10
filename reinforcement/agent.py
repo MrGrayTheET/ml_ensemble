@@ -200,7 +200,7 @@ class DDQNAgent:
         targets = rewards + not_done * self.gamma * target_q_values
 
         q_values = self.online_network.predict_on_batch(states)
-        q_values[[self.idx, actions]] = targets
+        q_values[self.idx, actions] = targets
 
         loss = self.online_network.train_on_batch(x=states, y=q_values)
         self.losses.append(loss)
@@ -257,16 +257,15 @@ def train_dqn(env, agent, num_episodes):
 
 def train_ddqn(trading_environment, ddqn, max_episodes, state_dim):
     episode_time, navs, market_navs, diffs, episode_eps = [], [], [], [], []
+
     start = time()
     results = []
     max_episode_steps = trading_environment.spec.max_episode_steps
-    num_actions = trading_environment.action_space.n
     for episode in range(1, max_episodes + 1):
         this_state = trading_environment.reset()
         for episode_step in range(max_episode_steps):
             action = ddqn.epsilon_greedy_policy(this_state.reshape(-1, state_dim))
             next_state, reward, done, _ = trading_environment.step(action)
-
             ddqn.memorize_transition(this_state,
                                      action,
                                      reward,
@@ -309,6 +308,7 @@ def train_ddqn(trading_environment, ddqn, max_episodes, state_dim):
         if len(diffs) > 25 and all([r > 0 for r in diffs[-25:]]):
             print(result.tail())
             break
-
+    result_data = pd.DataFrame(data={'Episode':range(1, max_episodes+1), 'Market':market_navs, 'Diff': diffs})
     trading_environment.close()
-    return
+
+    return result_data, ddqn
