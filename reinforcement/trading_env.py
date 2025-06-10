@@ -324,7 +324,9 @@ class TradingEnvironment(gym.Env):
         observation, done = self.data_source.take_step()
         reward, info = self.simulator.take_step(action=action,
                                                 market_return=observation[0])
-        return observation, reward, done, info
+        terminated = done  # you can define episode-ending logic separately
+        truncated = False  # or True if you manually stop early (e.g., NAV hits 0)
+        return observation, reward, terminated, truncated, info
 
     def reset(self):
         """Resets DataSource and TradingSimulator; returns first observation"""

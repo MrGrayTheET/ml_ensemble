@@ -265,7 +265,7 @@ def train_ddqn(trading_environment, ddqn, max_episodes, state_dim):
         this_state = trading_environment.reset()
         for episode_step in range(max_episode_steps):
             action = ddqn.epsilon_greedy_policy(this_state.reshape(-1, state_dim))
-            next_state, reward, done, _ = trading_environment.step(action)
+            next_state, reward, truncated, done, _ = trading_environment.step(action)
             ddqn.memorize_transition(this_state,
                                      action,
                                      reward,
