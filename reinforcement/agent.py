@@ -1,4 +1,5 @@
 '''Based on Double Deep Q Network agent from '''
+import os.path
 import random
 from collections import deque
 import numpy as np
@@ -8,7 +9,7 @@ import keras._tf_keras as keras
 from time import time
 import tf_keras.backend as K
 from tf_keras.regularizers import l2
-from tf_keras.models import Sequential,load_model, clone_model
+from tf_keras.models import Sequential,load_model, clone_model, save_model
 from tf_keras.layers import Dense, InputLayer, Dropout
 from tf_keras.optimizers import Adam
 
@@ -255,7 +256,7 @@ def train_dqn(env, agent, num_episodes):
 
     return results_df
 
-def train_ddqn(trading_environment, ddqn, max_episodes, state_dim):
+def train_ddqn(trading_environment, ddqn, max_episodes, state_dim, save_fp='ddqn_model.h5'):
     episode_time, navs, market_navs, diffs, episode_eps = [], [], [], [], []
 
     start = time()
@@ -283,8 +284,6 @@ def train_ddqn(trading_environment, ddqn, max_episodes, state_dim):
 
         # get results of last step
         final = result.iloc[-1]
-        if episode % 5 == 0:
-            print(final)
 
         # apply return (net of cost) of last action to last starting nav
         nav = final.nav * (1 + final.strategy_return)
@@ -309,6 +308,9 @@ def train_ddqn(trading_environment, ddqn, max_episodes, state_dim):
                           # share of agent wins, defined as higher ending nav
                           np.sum([s > 0 for s in diffs[-100:]]) / min(len(diffs), 100),
                           time() - start, ddqn.epsilon)
+        if episode % 50 == 0:
+            print(f'Saving model to {save_fp}')
+            save_model(ddqn , save_fp)
 
         if len(diffs) > 25 and all([r > 0 for r in diffs[-25:]]):
             print(result.tail())

@@ -1,4 +1,3 @@
-from agent import DQNAgent, train
 from trading_env import TradingEnvironment
 import sys
 import os
@@ -12,8 +11,7 @@ from argparse import Namespace
 
 self = Namespace
 
-t_env = TradingEnvironment(1250,source='sc', ticker='ES_F',data_timeframe='4h')
+t_env = TradingEnvironment(252,source='yf', ticker='ES=F',data_timeframe='1d')
 
 t_agent = DQNAgent(state_dim=t_env.reset().shape[0], action_dim=t_env.action_space.n)
 
-train(t_env, t_agent, 100)

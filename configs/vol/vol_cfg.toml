@@ -1,11 +1,11 @@
 [inititalization]
-intraday_tfs = ['1d']
+intraday_tfs = ['1h']
 HAR = false
-cluster = false
+cluster = true
 
 
 [cluster]
-use_cluster = false
+use_cluster = true
 method = 'wkmeans'
 k = 3
 features_config = '.'
@@ -18,42 +18,43 @@ pca_components = 3
 
 
 [cluster.wkmeans]
+k=3
 max_iter = 20
 tol = 1e-5
 gamma = 5.0
 mmd_pairs = 7
-h1 = 30
-h2 = 3
+h1 = 20
+h2 = 2
 
 
 [types]
 Volatility = true
 Trend = true
-Volume = false
-Additional = false
+Volume = true
+Additional = true
 
 [Volatility]
 ATR = false
 ATR_length = 42
 hawkes = true
-hawkes_mean = 42
-kappa = 0.1
-hawkes_signal_lb=21
+hawkes_mean = 168
+kappa = 0.2
+hawkes_signal_lb=72
 normalize_range_len = 10
 hawkes_binary_signal = true
 hl_range = true
-range_lengths = [20, 10]
+range_lengths = [20, 120, 240]
 lagged_vol = false
 vol_lags = [5]
 lagged_semivariance=false
 sv_lags = [1, 5]
 
 [Volume]
-relative_volume = false
-rvol_days = 20
-delta = false
+relative_volume = true
+rvol_days = 10
+delta = true
 delta_as_pct = true
-VSA = false
+VSA = true
 vsa_cols = ['Volume']
 vsa_lb = 30
 normalize_vol = false
@@ -61,11 +62,11 @@ normalize_vol = false
 [Trend]
 SMAs = true
 KAMAs = false
-kama_params = [20,2,30, 50, 2,30]
-sma_lens = [20, 50, 200]
+kama_params = [20,2,32, 50, 2,32]
+sma_lens = [100, 24]
 momentum = true
-momentum_periods = [5, 22, 63]
-use_scaled_returns = false
+momentum_periods = [21, 63]
+use_scaled_returns = true
 
 [Additional]
 cols = ["cluster"]
@@ -74,4 +75,5 @@ cols = ["cluster"]
 vol_normalized_returns = false
 vol_lb = 63
 target_horizon = 1
+
 

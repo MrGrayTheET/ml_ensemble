@@ -80,6 +80,7 @@ class DataSource:
                  features_config=None,
                  ):
 
+        self.bid_ask = False if data_source=='yf' else True
         self.features_config = os.path.join(CFG_ROOT,features_config) if features_config else os.path.join(CFG_ROOT, 'env_config.toml')
         self.timestamps = None
         self.time = ['hour', 'dayofweek'] if time_features else []
@@ -95,6 +96,7 @@ class DataSource:
 
         self.data = self.load_data(ticker, start_date, data_source)
 
+
         self.preprocess_data()
 
         self.min_values = self.data.min().values
@@ -104,9 +106,8 @@ class DataSource:
 
     def load_data(self, ticker, start_date, data_source):
         if data_source == 'yf':
-            df = yf.download(ticker, start=start_date, interval=self.tf)
+            df = yf.download(ticker, start=start_date, interval=self.tf, multi_level_index=False)
         else:
-            print(start_date)
             df = sc.get_chart(ticker, formatted=True, start_date=start_date)
 
         log.info('got data for {}...'.format(self.ticker))
@@ -118,7 +119,7 @@ class DataSource:
         with open(self.features_config, 'r') as f:
             feature_params = toml.load(f)
 
-        pre_model = FeaturePrep(self.data, intraday_tfs=[self.tf])
+        pre_model = FeaturePrep(self.data, intraday_tfs=[self.tf], bid_ask=self.bid_ask)
 
         if feature_params['types']['Volatility']:
             pre_model.volatility_signals(timeframe=self.tf,
@@ -296,7 +297,7 @@ class TradingEnvironment(gym.Env):
                  time_cost_bps=1e-4,
                  ticker='AAPL', source='sc',
                  start_date='2014-01-01',data_timeframe='4h',
-                 ohlc=False, cfg_file = None):
+                 ohlc=False, cfg_file = None, time_features=False, normalize=True):
         self.trading_days = trading_days
         self.trading_cost_bps = trading_cost_bps
         self.ticker = ticker
@@ -307,10 +308,14 @@ class TradingEnvironment(gym.Env):
                                       ticker=ticker,
                                       data_timeframe=data_timeframe,
                                       ohlc=ohlc,
-                                      features_config=cfg_file)
+                                      features_config=cfg_file,
+                                      time_features=time_features,
+                                      normalize=normalize)
+
         self.simulator = TradingSimulator(steps=self.trading_days,
                                           trading_cost_bps=self.trading_cost_bps,
                                           time_cost_bps=self.time_cost_bps)
+
         self.action_space = spaces.Discrete(3)
         self.observation_space = spaces.Box(self.data_source.min_values,
                                             self.data_source.max_values)

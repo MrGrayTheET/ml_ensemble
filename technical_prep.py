@@ -27,14 +27,16 @@ else:
     sc_cfg = '/content/drive/MyDrive/utils/SC_CFG_FP.toml'
 
 VOL_TARGET = 0.15
-resample_dict = ohlc_rs_dict(include_bid_ask=True)
+resample_dict = ohlc_rs_dict(include_bid_ask=False)
 
 
 class FeaturePrep:
 
-    def __init__(self, data, intraday_tfs=['5min', '10min', '1h', '4h'], train_test_ratio=0.8, hf_timeframe='5min',
-                 vol_scale=True,
-                 project_dir="F:\\ML\\multi_tf\\", vs_lb=22, rs_offset_hourly='30min', rs_offset_daily=None):
+    def __init__(self, data, intraday_tfs=['5min', '10min', '1h', '4h'],
+                 train_test_ratio=0.8, hf_timeframe='5min',
+                 vol_scale=True, bid_ask=False,
+                 project_dir="F:\\ML\\multi_tf\\", vs_lb=22,
+                 rs_offset_hourly='30min', rs_offset_daily=None):
         self.features = None
         self.model = None
         if not os.path.isdir(project_dir): os.mkdir(project_dir)
@@ -44,13 +46,12 @@ class FeaturePrep:
         self.data = data
         self.dfs_dict = {}
         self.feats_dict = {}
+        self.resample_dict = ohlc_rs_dict(include_bid_ask=bid_ask)
         self.train_ratio = train_test_ratio
         self.model_info = {'Dir': project_dir, 'RV_freq': hf_timeframe, 'ML': {}, 'Eval': {}}
-        self.dfs_dict['1d'] = data.resample('1d').apply(resample_dict).ffill().dropna()
+        self.dfs_dict['1d'] = data.resample('1d').apply(self.resample_dict).ffill().dropna()
         self.dfs_dict['1d'].index = self.dfs_dict['1d'].index.normalize()
         self.dfs_dict['1d']['returns'] = log_returns(self.dfs_dict['1d'].Close)
-
-
         self.dfs_dict['1d']['scaled_returns'] = vol_scaled_returns(self.dfs_dict['1d'].returns, vs_lb)
         vol = calc_daily_vol(self.dfs_dict['1d'].returns, vs_lb).ffill()
         self.ann_vol = vol * np.sqrt(252)
@@ -68,7 +69,7 @@ class FeaturePrep:
                 rs_params = {'rule':i, 'offset':rs_offset_daily}
                 vol_lb = vs_lb
 
-            self.dfs_dict[i] = self.data.resample(**rs_params).apply(resample_dict)
+            self.dfs_dict[i] = self.data.resample(**rs_params).apply(self.resample_dict)
             self.dfs_dict[i]['log_returns'] = log_returns(self.dfs_dict[i].Close)
             self.dfs_dict[i]['vol'] = calc_daily_vol(self.dfs_dict[i]['log_returns'], vol_lb)
             self.dfs_dict[i].dropna(inplace=True)
