@@ -153,8 +153,6 @@ class DataSource:
 
 
         pre_model.prepare_for_training(self.tf, feature_types=training_types, **feature_params['Training'])
-        print(pre_model.dfs_dict['1d'])
-
 
         features = pre_model.features + self.additional_features + self.time
         self.data = pre_model.training_df.copy()
@@ -174,6 +172,7 @@ class DataSource:
         cols = ['returns', *features]
         log.info(self.data.info())
         self.data = self.data[cols].dropna()
+        print(self.data.head(25))
 
         return
 
@@ -186,7 +185,6 @@ class DataSource:
     def take_step(self):
         """Returns data for current trading day and done signal"""
         obs = self.data.iloc[self.offset + self.step].values
-        timestamp = self.timestamps.iloc[self.offset + self.step]
         self.step += 1
         done = self.step > self.trading_days
         return obs, done
