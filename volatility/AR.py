@@ -9,7 +9,7 @@ from linear_models import multivariate_regression
 from feature_engineering import ohlc_rs_dict, log_returns, historical_rv, rsv
 
 
-resample_dict = ohlc_rs_dict(include_bid_ask=True)
+resample_dict = ohlc_rs_dict(include_bid_ask=False)
 scaler = StandardScaler()
 
 

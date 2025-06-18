@@ -1,3 +1,4 @@
+import datetime
 import os
 import numpy as np
 import pandas as pd
@@ -14,11 +15,83 @@ from sklearn.metrics import (mean_absolute_percentage_error,
                              classification_report,
                              log_loss)
 
+from scipy.stats import spearmanr
+
+
+from sklearn.model_selection import BaseCrossValidator
+import numpy as np
+import pandas as pd
+
+class TimeSeriesCV(BaseCrossValidator):
+    def __init__(self, n_splits=5, train_length=60, test_length=20, lookahead=0, date_col='date', shuffle=False):
+        self.n_splits = n_splits
+        self.train_length = train_length
+        self.test_length = test_length
+        self.lookahead = lookahead
+        self.date_col = date_col
+        self.shuffle = shuffle
+
+    def get_n_splits(self, X=None, y=None, groups=None):
+        return self.n_splits
+
+    def split(self, X, y=None, groups=None):
+        dates = pd.to_datetime(X[self.date_col])
+        X = X.copy()
+        X['_date'] = dates
+
+        unique_dates = dates.sort_values().unique()
+
+        total_required = self.train_length + self.lookahead + self.test_length
+        max_splits = (len(unique_dates) - total_required) // self.test_length + 1
+
+        if self.n_splits > max_splits:
+            raise ValueError(f"Too many splits ({self.n_splits}), only {max_splits} possible.")
+
+        for i in range(self.n_splits):
+            train_start = i * self.test_length
+            train_end = train_start + self.train_length
+
+            test_start = train_end + self.lookahead
+            test_end = test_start + self.test_length
+
+            train_window = unique_dates[train_start:train_end]
+            test_window = unique_dates[test_start:test_end]
+
+            train_idx = X[X['_date'].isin(train_window)].index
+            test_idx = X[X['_date'].isin(test_window)].index
+
+            if self.shuffle:
+                train_idx = np.random.permutation(train_idx)
+
+            yield train_idx, test_idx
+
+        X.drop(columns='_date', inplace=True)
+
+
+def format_time(t):
+    """Return a formatted time string 'HH:MM:SS
+    based on a numeric time() value"""
+    m, s = divmod(t, 60)
+    h, m = divmod(m, 60)
+    return f'{h:0>2.0f}:{m:0>2.0f}:{s:0>2.0f}'
+
+class ModelCV():
+    def __init__(self, model, data, cv_params):
+        return
+def get_fi(model):
+    fi = model.feature_importance(importance_type='gain')
+    return (pd.Series(fi / fi.sum(),
+                      index=model.feature_name()))
+def ic_lgbm(preds, train_data):
+    """Custom IC eval metric for lightgbm"""
+    is_higher_better = True
+    return 'ic', spearmanr(preds, train_data.get_label())[0], is_higher_better
 
 def clean_data(data, feats, target_col, sequence=False, periods_in=50, periods_out=20,
                train_split=True, train_size=0.80, scale_x=True, scale_y=False, x_scale_type='standard', y_scale_type='standard',
                minmax_settings=(0, 1),
                to_tensor=False, return_y_scaler=True):
+
     # Cleans data and converts to array
     cols = feats + [target_col]
     data = data[cols]
@@ -55,7 +128,7 @@ def clean_data(data, feats, target_col, sequence=False, periods_in=50, periods_o
             out_end_idx = end_idx + periods_out - 1
             if out_end_idx > len(x_data): break
             seq_x, seq_y = x_data[i:end_idx], y_data[end_idx - 1:out_end_idx]
-            if (len(seq_y[np.isnan(seq_y)] > 0) | len(seq_x[np.isnan(seq_x)] > 0)):continue
+            if len(seq_y[np.isnan(seq_y)] > 0) | len(seq_x[np.isnan(seq_x)] > 0):continue
             X.append(seq_x), y.append(seq_y)
 
 

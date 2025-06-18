@@ -4,6 +4,7 @@ import yfinance as yf
 from datetime import date, timedelta
 from matplotlib import pyplot as plt
 from pandas import DataFrame
+
 from scipy.signal import find_peaks
 from scipy.stats import linregress
 import datetime as dt
@@ -13,7 +14,7 @@ VOL_LOOKBACK = 60
 VOL_TARGET = 0.15
 
 cumulative_rets = lambda x: (1+ x).cumsum().apply(np.exp)
-range_t = lambda x: (x.High.max(), x.Low.min())
+range_t = lambda x: (x.Close.iloc[0], x.High.max(), x.Low.min(), x.Close.iloc[-1], x.Volume.sum())
 
 def cum_rets_by_clf(df, returns_col='returns', clf_col='regime', reset_index=False):
     cumulative_returns = df.groupby(clf_col)[returns_col].apply(cumulative_rets)
@@ -352,25 +353,34 @@ def vol_scaled_returns(returns, daily_vol_lb=22):
 
     return returns * VOL_TARGET / annualized_vol.shift(1)
 
+def reconstruct_time(df, month_col, day_col, year_col):
+    return
 
-def extract_time_features(data,set_index=False,hour=False, month=True, day=False, dayofweek=False, year=False):
+
+def extract_time_features(data, date_cols=None, reset_index=True):
+    if date_cols is None:
+        date_cols = ['month', 'weekday', 'date']
     df = data.copy(deep=True)
+    if not isinstance(df.index, pd.DatetimeIndex):
+        print('Index must be datetime index')
+        return False
 
-    if month:
+    if 'month' in date_cols:
         df['month'] = df.index.month
-    if day:
+    if 'date' in date_cols:
+        df['date'] = df.index.date
+    if 'day' in date_cols:
         df['day'] = df.index.day
-    if dayofweek:
+    if 'weekday' in date_cols:
         df['weekday'] = df.index.dayofweek
-    if year:
+    if 'year' in date_cols:
         df['year'] = df.index.year
-    if hour:
+    if 'hour' in date_cols:
         df['hour'] = df.index.hour
-    if set_index:
+    if reset_index:
         df.index = np.arange(len(df))
 
     return df
-
 
 def get_trading_days(start_year, end_year):
     # Define US market holidays
@@ -504,14 +514,31 @@ def atr(data, high='High', low='Low', close='Close', length=7, normalized=False)
     else:
         return atr
 
-def get_range(data, start_time:dt.time, end_time:dt.time):
+def get_range(data, start_time:dt.time, end_time:dt.time, normalize=False):
     filtered_data = data.loc[start_time:end_time]
-    hls = filtered_data.groupby(filtered_data.index.date).apply(range_t)
-    df = pd.DataFrame({'Highs': [hl[0] for hl in hls],
-                       'Lows': [hl[1] for hl in hls]
-                       }, index=pd.to_datetime(hls.index) + dt.timedelta(hours=end_time.hour, minutes=end_time.minute))
+    r_ohlcv = filtered_data.groupby(filtered_data.index.date).apply(range_t)
+    df = pd.DataFrame(columns=['Open', 'High', 'Low', 'Close', 'Volume'],
+                      data=[*r_ohlcv],
+                      index=pd.to_datetime(r_ohlcv.index)+dt.timedelta(hours=end_time.hour, minutes=end_time.minute))
 
-    return df
+    df['Return'] = np.log(df['Close']) - np.log(df['Open'])
+    new_cols = [f'{end_time.hour}{end_time.minute}_{i}' for i in df.columns]
+    data[new_cols] = df
+    data.ffill(inplace=True)
+
+    if normalize:
+        norm_cols = []
+        for i in new_cols[:-2]:
+            data[i+'_x'] = (data['Close'] - data[i])/data['Close']
+            norm_cols.append(i+'_x')
+
+        data[new_cols[-2]+'_x'] = (data[new_cols[-2]] - data[new_cols[-2]].mean())/data[new_cols[-2]].std()
+        norm_cols.append(new_cols[-2]+'_x')
+        norm_cols.append(new_cols[-1])
+        data.drop(columns=new_cols[:-1], inplace=True)
+        return data[norm_cols]
+
+    return data[new_cols]
 
 def rsv(returns: pd.Series, window=1, average=True) -> pd.DataFrame:
 

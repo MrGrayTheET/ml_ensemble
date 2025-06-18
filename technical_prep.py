@@ -70,8 +70,8 @@ class FeaturePrep:
                 vol_lb = vs_lb
 
             self.dfs_dict[i] = self.data.resample(**rs_params).apply(self.resample_dict)
-            self.dfs_dict[i]['log_returns'] = log_returns(self.dfs_dict[i].Close)
-            self.dfs_dict[i]['vol'] = calc_daily_vol(self.dfs_dict[i]['log_returns'], vol_lb)
+            self.dfs_dict[i]['returns'] = log_returns(self.dfs_dict[i].Close)
+            self.dfs_dict[i]['vol'] = calc_daily_vol(self.dfs_dict[i]['returns'], vol_lb)
             self.dfs_dict[i].dropna(inplace=True)
 
             if isinstance(self.dfs_dict[i].index, pd.DatetimeIndex): pass
@@ -198,7 +198,7 @@ class FeaturePrep:
 
         return data[features]
 
-    def temporal_features(self, timeframe='10min', ranges=True, range_starts=[], range_ends=[], range_rv=True,
+    def temporal_features(self, timeframe='10min', range_starts=[], range_ends=[], range_rv=True,range_hl=False,range_vol=True,
                           shift_date=False, keep_existing_features=False, normalize=True):
         data = self.dfs_dict[timeframe]
 
@@ -212,55 +212,15 @@ class FeaturePrep:
             t_start = range_starts[i]
             t_end = range_ends[i]
 
-            hls = get_range(data, t_start, t_end)
-            col_time = t_end.strftime("%H%M")
-
-            t_cols = [f'{col_time}_Open',
-                      f'{col_time}_High',
-                      f'{col_time}_Low',
-                      f'{col_time}_Close',
-                      f'{col_time}_Return',
-                      f'{col_time}_Volume']
-
-            tmp_price = data.loc[t_start:t_end]
-
-            tmp_data = np.zeros((len(hls.index), len(t_cols)))
-            tmp_df = pd.DataFrame(index=pd.to_datetime(hls.index), columns=t_cols,
-                                  data=tmp_data)
-
-            tmp_df.loc[:, t_cols[0]] = tmp_price['Close'].loc[t_start]
-            tmp_df.loc[:, t_cols[1]] = hls['Highs']
-            tmp_df.loc[:, t_cols[2]] = hls['Lows']
-            tmp_df.loc[:, t_cols[3]] = tmp_price['Close'].loc[t_end]
-            tmp_df.loc[t_end, t_cols[-2]] = np.log(tmp_df[f'{t_end.strftime("%H%M")}_Close']) - np.log(tmp_df[f'{t_end.strftime("%H%M")}_Open'])
-            range_vol = tmp_price['Volume'].groupby(tmp_price.index.date).sum()
-            range_vol.index = tmp_df.index
-            tmp_df.loc[t_end,  t_cols[-1]] = range_vol
-
-            if normalize:
-                range_feats += [f'{col_time}_H-L', f'{col_time}_H-C',  f'{col_time}_C-L' , t_cols[-1], t_cols[-2]]
-                hls['Close'] = tmp_price['Close'].loc[t_start]
-                tmp_df[range_feats[0]] = (tmp_df[t_cols[1]] - tmp_df[t_cols[2]]) / tmp_df[t_cols[3]]
-                tmp_df[range_feats[1]] = (tmp_df[t_cols[1]] - tmp_df[t_cols[3]]) / tmp_df[t_cols[3]]
-                tmp_df[range_feats[2]] = (tmp_df[t_cols[3]] - tmp_df[t_cols[2]]) / tmp_df[t_cols[3]]
-
-            else:
-                range_feats += t_cols
+            range_data = get_range(data, t_start, t_end, normalize=normalize)
+            features += range_data.columns.tolist()
 
             if range_rv:
-                range_feats += [f'{col_time}_rv']
-                tmp_df[f'{col_time}_rv'] = np.nan
-                rv = (tmp_price.returns.groupby(tmp_price.index.date).
-                    apply(lambda x: np.sqrt(np.sum(x ** 2))))
-
-                tmp_df.loc[:, f'{col_time}_rv'] = rv.values
-
-
-            features += range_feats
-
-            data[range_feats] = tmp_df.loc[:, range_feats]
-
-
+                tmp_price = data.loc[t_start:t_end]
+                rv = tmp_price.returns.groupby(tmp_price.index.date).apply(lambda x: np.sqrt(np.sum(x ** 2)))
+                rv.index = pd.to_datetime(rv.index) + dt.timedelta(hours=t_end.hour, minutes=t_end.minute)
+                data[f'{t_end.hour}{t_end.minute}_rv'] = rv
+                features.append(f'{t_end.hour}{t_end.minute}_rv')
 
         self.dfs_dict[timeframe][features] = data[features].ffill()
         self.feats_dict[timeframe]['Temporal'] = features
@@ -270,7 +230,7 @@ class FeaturePrep:
     def trend_indicators(self, timeframe, keep_existing_features=False,
                          SMAs=False, sma_lens=[20, 50, 200], KAMAs=False, kama_params=[(20, 2, 32)],
                          momentum=True, momentum_periods=[24],
-                         normalize_features=True, use_scaled_returns=True):
+                         normalize_features=True, use_scaled_returns=False):
 
         if keep_existing_features:
             features = self.dfs_dict[timeframe]['Trend']
@@ -333,36 +293,30 @@ class FeaturePrep:
 
         return self.vol_model
 
-    def transfer_features(self, from_tf, to_tf, feature_names, include_tf_in_col=False, offset=dt.timedelta(minutes=30)):
+    def transfer_features(self, from_tf, to_tf, feature_names,target_time=None, insert_at=None, include_tf_in_col=False,add_to_features=True):
         X = self.dfs_dict[from_tf][feature_names]
-        y_df = self.dfs_dict[to_tf]
+        y_df = self.dfs_dict[to_tf].copy()
 
-        if include_tf_in_col:
-            new_names = [f'{to_tf}_{i}' for i in feature_names]
-        else:
-            new_names = feature_names
+        if target_time:
+            X = X.loc[target_time]
+            if insert_at is None:
+                insert_at = dt.time(13, 0)
 
-
-        y_df[new_names] = np.nan
-
-        for i in range(len(new_names)):
-            if 'd' in from_tf:
-                y_df[new_names[i]] = np.nan
-                feat = X[feature_names[i]]
-                feat.index = feat.index + offset
-                y_df.loc[feat[1:].index, new_names[i]] = feat[1:]
-
-            if 'min' in from_tf:
-                y_df[new_names[i]] = X[feature_names[i]]
-
+        X_vals = X.reindex(y_df.loc[insert_at].index, method='pad')
+        new_names = [name+'_'+from_tf for name in feature_names ] if include_tf_in_col else feature_names
+        y_df[new_names] = X_vals
         y_df.ffill(inplace=True)
 
         if new_names not in self.feats_dict[to_tf]['Additional']:
-            self.feats_dict[to_tf]['Additional'] += new_names
+            self.feats_dict[to_tf]['Additional'] += new_names if add_to_features else []
+
+        self.dfs_dict[to_tf] = y_df
 
         return self.dfs_dict[to_tf][new_names]
 
-    def prepare_for_training(self, training_tf, target_horizon, feature_types=['Volatility', 'Trend', 'Volume'],
+
+
+    def prepare_for_training(self, training_tf, target_horizon=None,target_col='target_data', feature_types=['Volatility', 'Trend', 'Volume'],
                              vol_normalized_returns=False, vol_lb=63, additional_tf=None, additional_features=None,
                              target_vol=False):
 
@@ -370,24 +324,28 @@ class FeaturePrep:
 
         feats = self.feats_dict[training_tf]
 
-        target_returns = np.log(self.training_df.Close.shift(-target_horizon)) - np.log(self.training_df.Close)
+        if target_horizon is not None:
+            target_returns = np.log(self.training_df.Close.shift(-target_horizon)) - np.log(self.training_df.Close)
 
-        if vol_normalized_returns:
+            if vol_normalized_returns:
 
-            target_returns = target_returns * VOL_TARGET / self.training_df.vol
+                target_returns = target_returns * VOL_TARGET / self.training_df.vol
 
-        self.training_df.insert(0, 'target_returns', target_returns)
+            self.training_df.insert(0, target_col, target_returns)
+            self.training_df.drop_duplicates(keep='first')
+        else:
+            pass
 
         if additional_tf is not None:
             self.transfer_features(from_tf=additional_tf, to_tf=training_tf, feature_names=additional_features)
-
+        drop_thresh = 0.8
         rows_to_drop = nan_fraction_exceeds(self.training_df, axis=1, threshold =0.5)
         self.training_df = self.training_df[~rows_to_drop]
 
-        cols_to_drop = nan_fraction_exceeds(self.dfs_dict[training_tf], axis=0, threshold=0.9)
+        cols_to_drop = nan_fraction_exceeds(self.dfs_dict[training_tf], axis=0, threshold=drop_thresh)
 
         if 'target_returns' in cols_to_drop:
-            print(f'More than {0.9 * 100}% of the target column is missing, check inputs')
+            print(f'More than {drop_thresh * 100}% of the target column is missing, check inputs')
             raise ValueError
 
         drop_cols = cols_to_drop[cols_to_drop].index.tolist()
@@ -570,3 +528,4 @@ class LoadedModel(FeaturePrep):
         print(f"Model and associated data loaded from '{model_dir}'")
 
         return
+

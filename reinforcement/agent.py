@@ -155,6 +155,7 @@ class DDQNAgent:
         model = Sequential(layers)
         model.compile(loss='mean_squared_error',
                       optimizer=Adam(lr=self.learning_rate))
+
         return model
 
     def update_target(self):

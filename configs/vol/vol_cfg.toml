@@ -5,7 +5,7 @@ cluster = true
 
 
 [cluster]
-use_cluster = true
+use_cluster = false
 method = 'wkmeans'
 k = 3
 features_config = '.'
@@ -23,8 +23,8 @@ max_iter = 20
 tol = 1e-5
 gamma = 5.0
 mmd_pairs = 7
-h1 = 20
-h2 = 2
+h1 = 300
+h2 = 30
 
 
 [types]
@@ -55,7 +55,7 @@ rvol_days = 10
 delta = true
 delta_as_pct = true
 VSA = true
-vsa_cols = ['Volume']
+vsa_cols = ['AskVolume']
 vsa_lb = 30
 normalize_vol = false
 
@@ -65,8 +65,8 @@ KAMAs = false
 kama_params = [20,2,32, 50, 2,32]
 sma_lens = [100, 24]
 momentum = true
-momentum_periods = [21, 63]
-use_scaled_returns = true
+momentum_periods = [120, 60]
+use_scaled_returns = false
 
 [Additional]
 cols = ["cluster"]

@@ -25,7 +25,7 @@ mtf_es.volatility_signals('5min', lagged_vol=False, vol_lags=[21], lagged_semiva
 mtf_es.train_HAR('10min', scale_data=False, penalty=None, cv=3, har_type='rsv', training_size=0.8, target_horizon=5)
 mtf_es.train_HAR('5min', scale_data=False,penalty=None,cv=3, har_type='rsv', training_size=0.8, target_horizon=1)
 mtf_es.train_HAR('5min', scale_data=True, penalty='cv', har_type='pd')
-mtf_es.volume_features('1h', VSA=True, vsa_lb=120,vsa_col='AskVolume', relative_volume=True, cum_rvol=False, normalize_vol=False, normalizer_len=168)
+mtf_es.volume_features('1h', VSA=True, vsa_lb=120,vsa_col='AskVolume', relative_volume=True, cum_rvol=False, normalize_vol=True, normalizer_len=168)
 mtf_es.volatility_signals('1h', ATR=True, hawkes=True,lagged_vol=False, hawkes_binary_signal=True, hawkes_mean=168, hawkes_signal_lb=48, kappa=0.2, hl_range=True, range_lengths=[48, 72])
 mtf_es.transfer_features('1d', '1h', feature_names=mtf_es.feats_dict['1d']['Additional'])
 

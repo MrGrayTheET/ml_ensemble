@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-import os
+import os, sys
 from pathlib import Path
 from configparser import ConfigParser
 import yfinance as yf
